@@ -1,0 +1,231 @@
+---
+title: Playground
+description: HellDots is running on this site. Leave a comment on these docs, and drive the same widget through its public API.
+icon: MousePointerClick
+---
+
+Everything on this page is the real library. The toolbar at the bottom of your
+screen belongs to a `CommentOverlay` mounted in this site's root layout, with
+`persistence: "localStorage"` — so whatever you leave here is stored in **your
+browser only** and will still be here tomorrow. Nothing is sent anywhere;
+there is no server on the other end of it.
+
+<HellDotsControls />
+
+## Try it
+
+<Steps>
+
+<Step>
+
+### Turn comment mode on
+
+Press <kbd>Alt</kbd>+<kbd>C</kbd> (<kbd>Option</kbd>+<kbd>C</kbd> on macOS),
+click the toolbar's dot button, or use the button above — all three flip the
+same switch.
+
+</Step>
+
+<Step>
+
+### Click something
+
+Anything on this page. A heading, a link, a button in the mock UI below. The
+comment box opens immediately and the screenshot renders behind it.
+
+</Step>
+
+<Step>
+
+### Drag instead
+
+Drag a box around a region and HellDots attaches a full-resolution crop of
+exactly what you selected, on top of the automatic viewport capture.
+
+</Step>
+
+<Step>
+
+### Come back later
+
+Reload. Navigate to another page in these docs and back. The comment re-anchors
+itself to the element it was left on — that is the whole point of the anchor
+fingerprint.
+
+</Step>
+
+</Steps>
+
+## Something to comment on
+
+<DemoSurface />
+
+Leave a comment on the **Upgrade to Pro** button, then open the inbox and look
+at the detail: the selector, the DOM path, the nearby text, the viewport it was
+reported at. That block is also what the **copy** button puts on your clipboard,
+formatted for pasting into a coding agent.
+
+## How this site does it
+
+No private hooks — the docs use the same public API everything else does. The
+whole integration is one client component in the root layout:
+
+```tsx title="components/helldots/provider.tsx"
+'use client';
+
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import type { CommentOverlay } from 'helldots';
+
+export function HellDotsProvider({ children }) {
+  const [overlay, setOverlay] = useState<CommentOverlay | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    let cancelled = false;
+    let instance: CommentOverlay | undefined;
+
+    void import('helldots').then(({ createCommentOverlay }) => {
+      if (cancelled) return;
+
+      instance = createCommentOverlay({
+        user: readIdentity(), // a name in localStorage + a minted anon id
+        persistence: 'localStorage',
+        fastCapture: true,
+        navigate: (page) => router.push(page),
+        autoDetectNavigation: true,
+        onReady: setOverlay,
+        onCommentModeChanged: setCommentMode,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      instance?.cleanup();
+    };
+  }, []);
+
+  // pushState routing fires no popstate — tell the widget once the new route
+  // has painted and its elements exist to anchor against.
+  useEffect(() => {
+    if (!overlay) return;
+    return onNextPaint(() => overlay.notifyNavigation());
+  }, [overlay, pathname]);
+
+  return children;
+}
+```
+
+Five decisions in there are worth naming, because they are the ones any App
+Router site has to make:
+
+- **`import()` inside the effect.** The package is safe to import on the
+  server, but there is no reason to ship it in the first payload of a
+  documentation site. This keeps it out until the page is interactive.
+- **`cancelled` + `cleanup()`.** React's development double-mount runs the
+  effect twice. The flag stops the first import from mounting a second toolbar
+  after its cleanup has already run.
+- **`navigate: router.push`.** The inbox's "view on its page" jump would
+  otherwise be a full page load, throwing away the whole SPA.
+- **`onCommentModeChanged`.** The keyboard shortcut never reaches React, and
+  the mode switches itself off after a comment is saved — without this the
+  panel's button drifts out of step with the toolbar.
+- **`notifyNavigation()` on `pathname`.** `autoDetectNavigation` covers back
+  and forward; pushState routing does not fire `popstate`, so the router's own
+  change is what triggers the re-anchor.
+
+That last one has a wrinkle worth stealing. The obvious scheduling is two
+`requestAnimationFrame`s — the first lands after React commits, the second
+after the browser lays the commit out. But **a hidden tab never paints, so its
+`requestAnimationFrame` never fires at all**, and a navigation that happens
+while you are looking at another tab would leave the widget pointing at the
+previous page. Layout is still computed in a hidden tab, so the fix is a
+deadline, not a longer wait:
+
+```ts
+function onNextPaint(run: () => void): () => void {
+  let done = false;
+  let inner = 0;
+
+  const fire = () => {
+    if (done) return;
+    done = true;
+    run();
+  };
+
+  const outer = requestAnimationFrame(() => {
+    inner = requestAnimationFrame(fire);
+  });
+  const timer = window.setTimeout(fire, 150);
+
+  return () => {
+    done = true;
+    cancelAnimationFrame(outer);
+    cancelAnimationFrame(inner);
+    clearTimeout(timer);
+  };
+}
+```
+
+The identity is minted the way the README suggests for an app with no accounts:
+a `crypto.randomUUID()` kept in `localStorage` under a key this site owns. It
+identifies a browser profile, not a person.
+
+```ts
+const KEY = 'helldots-docs:anon-id';
+let id = localStorage.getItem(KEY);
+if (!id) localStorage.setItem(KEY, (id = crypto.randomUUID()));
+```
+
+## Comments and the language switch
+
+Worth knowing before it surprises you: **a comment does not follow you across
+languages.** HellDots keys a comment to `location.pathname`, and the two
+translations of a page are two URLs — `/docs/guides/captures` and
+`/es/docs/guides/captures`.
+
+So a comment left on the English page reads as `inactive` on the Spanish one:
+not lost, still in the corpus, still listed in the inbox — just not anchored to
+anything on the page you are looking at. Switch back and it is anchored again.
+
+That is the library behaving correctly rather than a gap in it. A site that
+wanted one shared thread per page regardless of language would strip the locale
+prefix before handing the record to its own store, which is a decision only the
+host can make.
+
+## Drive it from your console
+
+This site puts the live instance on `window` — so the fastest way to read the
+[API reference](/docs/api/methods) is to open your console and try it.
+
+```js
+helldots.comments.length;
+helldots.toggleCommentMode();
+
+const [first] = helldots.serializeComments();
+helldots.setCommentType(first.id, 'bug');
+helldots.setCommentPriority(first.id, 'high');
+helldots.toggleCommentReaction(first.id, '🚀');
+
+helldots.getMetrics();
+helldots.commentLink(first.id);
+```
+
+That handle is this site's doing, not the library's — one line in `onReady`.
+HellDots itself puts nothing on `window`.
+
+## Clearing up
+
+Your comments live under a single `localStorage` key on this origin. **Clear
+all** in the panel above calls `overlay.clearComments()`, which removes the
+markers, the memory and the stored copy in one go. Clearing site data in your
+browser does the same thing more bluntly.
+
+<Callout type="warn" title="This is a demo, not a notebook">
+  These docs get republished. A `localStorage` corpus survives that fine, but
+  do not keep anything here you would mind losing to a cleared browser profile
+  or a different device — `localStorage` is per-origin, per-browser, and goes
+  no further. For real work, [wire the callbacks to a
+  backend](/docs/guides/persistence#your-own-store).
+</Callout>

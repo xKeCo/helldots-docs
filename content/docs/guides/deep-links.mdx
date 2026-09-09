@@ -1,0 +1,85 @@
+---
+title: Deep links
+description: Share a URL that opens one comment — including a comment the widget has not loaded yet.
+icon: Link
+---
+
+Every comment has a **Copy link** action. The URL it produces is the current
+page plus a query parameter carrying the comment's id; opening it anywhere
+starts the widget and opens the inbox on that comment.
+
+```js
+overlay.commentLink(id);
+// → "https://example.com/pricing?helldotsComment=V1StGXR8_Z5jdHi6B-myT"
+// → null when the id is unknown
+```
+
+## Renaming the parameter
+
+```js
+createCommentOverlay({ linkParam: 'comment' });
+```
+
+The default is `helldotsComment`. Override it when your app already routes on
+that name — the widget reads back whichever one you configured.
+
+## Reading it before the widget exists
+
+A corpus too big to ship on every page load has to be fetched per page. That
+works right up until somebody shares a link to a comment that is not in the
+fetched set.
+
+The parameter reader is exported, so you can look before an overlay exists —
+and never write the parameter name twice:
+
+```js
+import { readCommentLinkParam, DEFAULT_LINK_PARAM } from 'helldots';
+
+DEFAULT_LINK_PARAM; // "helldotsComment"
+
+const id = readCommentLinkParam(); // reads location.href by default
+const only = id ? [await api.get(`/comments/${id}`)] : [];
+```
+
+Both arguments are optional: `readCommentLinkParam(param?, href?)`. Pass the same
+`param` the widget was configured with. A malformed URL yields `null` rather than
+throwing.
+
+## Lazy-loading the linked comment
+
+The other half of the same problem, handled by the widget: `onCommentRequested`
+fires when a link points at a comment the widget does not hold — **once per id,
+not once per attempt.**
+
+```js
+const overlay = createCommentOverlay({
+  onCommentRequested: async (id) => {
+    overlay.loadComments([await api.get(`/comments/${id}`)]);
+  },
+});
+
+overlay.loadComments(await api.get(`/comments?page=${location.pathname}`));
+```
+
+Return a promise and the link is retried once it settles — the inbox opens on the
+comment as soon as it lands. Until then it says the comment was not found, rather
+than doing nothing.
+
+Without a handler at all, the inbox still opens and reports that the comment was
+not found. A handler that throws or rejects reaches
+[`onError(error, "link")`](/docs/api/events#onerror).
+
+## A comment on another page
+
+The inbox lists comments from every page, not just the one you are on. Its "view
+on its page" action navigates there — by default with a full page load, which
+throws away a single-page app's state.
+
+```js
+createCommentOverlay({
+  navigate: (page) => router.push(page),
+});
+```
+
+Hand it your router's push, and call `notifyNavigation()` once the route has
+rendered. See [frameworks](/docs/guides/frameworks#single-page-apps).

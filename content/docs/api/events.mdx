@@ -1,0 +1,220 @@
+---
+title: Events & callbacks
+description: The ChangeEvent union, the ten specific callbacks that mirror it, and the five that report something other than a change.
+icon: Radio
+---
+
+Every mutation is available two ways: as one stream, or as a specific callback.
+They carry **exactly the same events at exactly the same moments, with the same
+metadata**. Subscribe either way, or both.
+
+```js
+createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+});
+```
+
+A handler that throws is caught and warned about. It never rolls back the
+mutation that emitted it.
+
+## ChangeEvent
+
+A discriminated union on `type`. Switch on it and TypeScript narrows the rest.
+
+```ts
+type ChangeEvent =
+  | ({ type: 'comment:created'; comment: SerializedComment } & ChangeMeta)
+  | ({ type: 'comment:edited'; comment: SerializedComment } & ChangeMeta)
+  | ({ type: 'comment:deleted'; id: CommentId } & ChangeMeta)
+  | ({ type: 'comment:status-changed'; comment: SerializedComment } & StatusChangeMeta)
+  | ({ type: 'comment:updated'; comment: SerializedComment } & UpdateMeta)
+  | ({ type: 'comment:anchor-lost'; comment: SerializedComment } & ChangeMeta)
+  | ({ type: 'reply:added'; comment: SerializedComment; reply: CommentReply } & ChangeMeta)
+  | ({ type: 'reply:edited'; comment: SerializedComment; reply: CommentReply } & ChangeMeta)
+  | ({ type: 'reply:deleted'; comment: SerializedComment; reply: CommentReply } & ChangeMeta)
+  | ({ type: 'reaction:toggled'; comment: SerializedComment; reply: CommentReply | null } & ChangeMeta);
+```
+
+The metadata is **flattened onto** the event, rather than nested under a `meta`
+key — `event.origin`, `event.from`, `event.to`, `event.field`.
+
+## The metadata
+
+### meta.origin
+
+Present on every event.
+
+| Value    | Means                                                                       |
+| -------- | --------------------------------------------------------------------------- |
+| `"user"` | Somebody acting inside the widget — a marker, the thread popover, the inbox |
+| `"host"` | Your own code calling a method                                              |
+
+The widget's UI drives the very same public methods you do, so this is the only
+thing that tells the two apart. It exists for multi-user apps: applying a change
+that arrived over a socket means calling the emitting method, so without it every
+host has to wrap its own writes in a flag.
+
+```js
+onChange: (event) => {
+  if (event.origin === 'host') return; // our own write, echoed back
+  socket.emit('helldots', event);
+};
+```
+
+`comment:anchor-lost` is always `"host"`, including the repeat every
+`notifyNavigation()` produces — so the same guard silences those too.
+
+### StatusChangeMeta
+
+```ts
+interface StatusChangeMeta extends ChangeMeta {
+  from: CommentStatus;
+  to: CommentStatus;
+}
+```
+
+Both ends of the move, so "reopened" and "resolved" are told apart without
+diffing against a previous copy.
+
+### UpdateMeta
+
+```ts
+type UpdateMeta = ChangeMeta &
+  (
+    | { field: 'type'; from: CommentType | null; to: CommentType | null }
+    | { field: 'priority'; from: CommentPriority | null; to: CommentPriority | null }
+    | { field: 'tags'; from: string[]; to: string[] }
+  );
+```
+
+Discriminated on `field`, so narrowing gives correctly typed `from` and `to` for
+each of the three.
+
+## The ten change callbacks
+
+Every one ends with a `meta` argument, so an existing handler that ignores it
+keeps working unchanged.
+
+| Callback                                  | Fires when                                                     |
+| ----------------------------------------- | -------------------------------------------------------------- |
+| `onCommentCreated(comment, meta)`         | A new comment is saved                                          |
+| `onCommentEdited(comment, meta)`          | A comment's text is rewritten                                   |
+| `onCommentDeleted(id, meta)`              | A comment is removed                                            |
+| `onCommentStatusChanged(comment, meta)`   | Status moves along the lifecycle — `meta` is `StatusChangeMeta` |
+| `onCommentUpdated(comment, meta)`         | Type, priority or tags change — `meta` is `UpdateMeta`          |
+| `onAnchorLost(comment, meta)`             | A comment could not be re-anchored                              |
+| `onReplyAdded(comment, reply, meta)`      | A reply is added to any comment                                 |
+| `onReplyEdited(comment, reply, meta)`     | A reply's text is rewritten                                     |
+| `onReplyDeleted(comment, reply, meta)`    | A reply is removed                                              |
+| `onReactionToggled(comment, reply, meta)` | A reaction is added or removed — `reply` is `null` at the root  |
+
+### onCommentStatusChanged
+
+```js
+onCommentStatusChanged: (comment, { from, to }) => {
+  if (from === 'resolved') notify(`${comment.author} reopened this`);
+};
+```
+
+### onCommentUpdated
+
+```js
+onCommentUpdated: (comment, meta) => {
+  if (meta.field === 'priority' && meta.to === 'high') page(comment);
+  if (meta.field === 'tags') reindex(comment.id, meta.to);
+};
+```
+
+### onAnchorLost
+
+Fired for each comment that could not be re-anchored — by `loadComments`, and
+again by every `notifyNavigation` that lands somewhere its element does not
+exist. Those repeats always carry `origin: "host"`.
+
+```js
+onAnchorLost: (comment, meta) => {
+  if (meta.origin === 'host') return; // a repeat from a navigation
+  analytics.track('helldots:anchor-lost', { page: comment.page });
+};
+```
+
+A jump in these after a deploy means a refactor moved the elements people had
+been commenting on.
+
+## The five that are not changes
+
+### onReady
+
+```ts
+onReady?: (overlay: CommentOverlay) => void;
+```
+
+The widget has mounted and every method is safe to drive. It receives the
+instance because, when the document is already parsed, the mount happens inside
+the constructor — before `createCommentOverlay()` has returned anything to
+assign. The right place to `loadComments()`.
+
+### onError
+
+```ts
+onError?: (error: unknown, context: ErrorContext) => void;
+```
+
+Failures the widget survives but you would otherwise only find in the console.
+The console warning stays either way.
+
+| `context`     | What happened                                                       |
+| ------------- | -------------------------------------------------------------------- |
+| `"capture"`   | A screenshot failed to render; the comment saves without one         |
+| `"storage"`   | `localStorage` could not be written; this browser's copy now diverges |
+| `"load"`      | A record handed to `loadComments` was malformed and was skipped      |
+| `"link"`      | An `onCommentRequested` handler threw or rejected                    |
+| `"transform"` | A `transformScreenshot` handler failed; the data URL was kept        |
+
+```js
+onError: (error, context) => {
+  if (context === 'storage') toast.warn('Comments could not be saved locally.');
+  logger.warn({ context }, String(error));
+};
+```
+
+### onCommentRequested
+
+```ts
+onCommentRequested?: (id: CommentId) => void | Promise<unknown>;
+```
+
+A "Copy link" URL points at a comment the widget does not hold — **once per id,
+not once per attempt.** Return a promise and the link is retried once it settles.
+See [deep links](/docs/guides/deep-links#lazy-loading-the-linked-comment).
+
+### onCommentModeChanged
+
+```ts
+onCommentModeChanged?: (active: boolean) => void;
+```
+
+Comment mode turned on or off, however it was flipped — the toolbar button, the
+keyboard shortcut, the inbox empty state, or the automatic switch-off after a
+comment is saved.
+
+The shortcut is the reason this exists: the host never sees that keystroke, so an
+app that needs to stand down while somebody is picking an element — pause a
+carousel, disable its own drag-and-drop, dim a layer — has no other signal.
+
+### onCommentOpened
+
+```ts
+onCommentOpened?: (comment: SerializedComment) => void;
+```
+
+Somebody opened a comment's full thread, from its marker or the inbox detail —
+the only two places the replies are readable. It does not fire when the inbox
+merely re-renders.
+
+This is what an unread count is built on. HellDots keeps no read state of its
+own, because whose "read" it is depends on an identity only you can persist.
+
+```js
+onCommentOpened: (comment) => api.post(`/comments/${comment.id}/read`);
+```

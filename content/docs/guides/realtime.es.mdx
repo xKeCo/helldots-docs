@@ -1,0 +1,172 @@
+---
+title: Tiempo real y multiusuario
+description: Sincroniza comentarios por un socket sin devolver tus propias escrituras en un bucle infinito.
+icon: RefreshCw
+---
+
+En cuanto hay más de una persona mirando la misma página, los comentarios tienen
+que viajar. El patrón siempre tiene la misma forma — subir los cambios locales,
+aplicar los remotos — y tiene exactamente una trampa.
+
+## El eco
+
+Aplicar un cambio que llegó por un socket significa llamar al mismo método
+público que llama la interfaz. Ese método emite. La emisión llega a tu manejador.
+Tu manejador la envía al servidor. El servidor la difunde. Para siempre.
+
+`meta.origin` es lo que rompe el bucle:
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: session.name, id: session.userId },
+
+  onChange: (event) => {
+    if (event.origin === 'host') return; // escritura nuestra, devuelta en eco
+    socket.emit('helldots', event);
+  },
+});
+
+socket.on('helldots', (event) => {
+  switch (event.type) {
+    case 'comment:created':
+      overlay.loadComments([event.comment]);
+      break;
+    case 'comment:status-changed':
+      overlay.setCommentStatus(event.comment.id, event.comment.status);
+      break;
+    case 'comment:deleted':
+      overlay.deleteComment(event.id);
+      break;
+  }
+});
+```
+
+| `origin` | Significa                                                                     |
+| -------- | ----------------------------------------------------------------------------- |
+| `"user"` | Alguien actuando dentro del widget — un marcador, el popover del hilo, la bandeja |
+| `"host"` | Tu propio código llamando a un método                                         |
+
+La bandeja y el popover del hilo accionan exactamente los mismos métodos públicos
+que tú, así que esto es lo único que distingue unos de otros. Sin ello, cada
+integración tendría que envolver todas sus escrituras en una bandera — que es
+trabajo de la librería, no tuyo.
+
+<Callout title="anchor-lost siempre es host">
+  `comment:anchor-lost` lleva `origin: "host"` sin excepción, incluida la
+  repetición que produce cada `notifyNavigation()` para un comentario cuyo
+  elemento no está en la nueva página. La misma guarda las silencia.
+</Callout>
+
+## Qué se movió, no solo que algo cambió
+
+Dos eventos llevan la transición, así que nunca tienes que comparar con una copia
+anterior que guardabas justo para eso.
+
+```js
+createCommentOverlay({
+  onCommentStatusChanged: (comment, { from, to }) => {
+    if (from === 'resolved') notify(`${comment.author} reabrió esto`);
+    if (to === 'resolved') celebrate(comment);
+  },
+
+  onCommentUpdated: (comment, meta) => {
+    if (meta.field === 'priority' && meta.to === 'high') page(comment);
+  },
+});
+```
+
+`comment:updated` está discriminado por `field`, así que estrecharlo te da `from`
+y `to` correctamente tipados para cada uno de los tres casos — `string[]` para las
+etiquetas, `CommentPriority | null` para la prioridad.
+
+Volver a aplicar un valor que el comentario ya tiene no hace nada: ni evento, ni
+escritura. Eso hace que el flujo de bajada sea idempotente sin esfuerzo.
+
+## Un flujo o diez callbacks
+
+```js
+createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+});
+```
+
+`ChangeEvent` es una unión discriminada — haz `switch` sobre `event.type` y
+TypeScript estrecha el payload. Los diez callbacks específicos llevan exactamente
+los mismos eventos en exactamente los mismos momentos, con los mismos metadatos;
+suscríbete a unos, a otros, o a los dos.
+
+Un manejador que lanza se captura y se avisa por consola. Nunca revierte la
+mutación que lo emitió.
+
+## Reconciliar al reconectar
+
+`loadComments()` reemplaza por id pero nunca elimina, así que un socket que se
+perdió un borrado deja un fantasma. Después de un hueco, reinicia en lugar de
+fusionar:
+
+```js
+socket.on('reconnect', async () => {
+  overlay.clearComments();
+  overlay.loadComments(await api.get(`/comments?page=${location.pathname}`));
+});
+```
+
+`clearComments()` no dispara callbacks por comentario — es un reinicio, y
+devolverle cien borrados al servidor es justo lo que no quieres.
+
+## Contadores de no leídos
+
+HellDots no guarda ningún estado de lectura propio, porque de quién es ese
+"leído" depende de una identidad que solo tú puedes persistir.
+`onCommentOpened` es la señal sobre la que construir uno:
+
+```js
+createCommentOverlay({
+  onCommentOpened: (comment) => api.post(`/comments/${comment.id}/read`),
+});
+```
+
+Se dispara cuando un hilo se lee **de verdad** — desde su marcador o desde el
+detalle de la bandeja, los dos únicos sitios donde las respuestas son visibles. No
+se dispara cuando la bandeja simplemente se vuelve a renderizar.
+
+## Apartarse mientras alguien señala
+
+El atajo de teclado nunca llega a tu código, así que una aplicación que tiene que
+quitarse de en medio mientras alguien elige un elemento no tiene otra señal:
+
+```js
+createCommentOverlay({
+  onCommentModeChanged: (active) => {
+    carousel.paused = active; // tu drag-and-drop pelearía con el selector
+    dropzone.disabled = active;
+  },
+});
+```
+
+Se dispara sea como sea que se accione el modo — el botón de la barra, el atajo,
+el estado vacío de la bandeja, o el apagado automático tras guardar un comentario.
+
+## Multipestaña, sin socket
+
+`persistence: "localStorage"` asume una pestaña activa por página. Las escrituras
+de otra pestaña se conservan en la siguiente sincronización, pero dos pestañas
+editando el mismo comentario se resuelven por última escritura, y un comentario
+borrado en una pestaña puede reaparecer si otra que todavía lo tiene en memoria
+guarda después.
+
+Si la edición multipestaña de verdad importa, persiste mediante los callbacks —
+aunque "el backend" sea un `BroadcastChannel`:
+
+```js
+const channel = new BroadcastChannel('helldots');
+
+const overlay = createCommentOverlay({
+  onChange: (event) => {
+    if (event.origin === 'host') return;
+    channel.postMessage(event);
+  },
+});
+
+channel.onmessage = ({ data }) => applyRemote(overlay, data);
+```

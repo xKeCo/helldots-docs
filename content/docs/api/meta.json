@@ -1,0 +1,4 @@
+{
+  "title": "API reference",
+  "pages": ["create-comment-overlay", "options", "methods", "events", "types"]
+}

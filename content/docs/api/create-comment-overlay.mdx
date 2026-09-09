@@ -1,0 +1,136 @@
+---
+title: createCommentOverlay
+description: The entry point — its two overloads, the instance it returns, and the two module-level helpers that ship beside it.
+icon: SquareFunction
+---
+
+```ts
+import createCommentOverlay, {
+  createCommentOverlay as named,
+  readCommentLinkParam,
+  DEFAULT_LINK_PARAM,
+  CommentOverlay,
+} from 'helldots';
+```
+
+`createCommentOverlay` is both the default and a named export. The class,
+`CommentOverlay`, is exported too — you rarely need it as a value, but it is the
+type you annotate an instance with.
+
+## Signature
+
+The function has two overloads, discriminated by `autoInit`.
+
+```ts
+// Mounts immediately (the default).
+function createCommentOverlay(
+  options?: CommentOverlayOptions & { autoInit?: true },
+): CommentOverlay;
+
+// Nothing is mounted; you get an initializer to call when you are ready.
+function createCommentOverlay(
+  options: CommentOverlayOptions & { autoInit: false },
+): () => CommentOverlay;
+```
+
+### Mounting immediately
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+Safe to call before the document is ready — the instance defers its own DOM work
+to `DOMContentLoaded`. It is *not* safe to call outside a browser; see
+[server-rendered apps](/docs/guides/frameworks#server-rendered-apps).
+
+### Deferring the mount
+
+```js
+const init = createCommentOverlay({ autoInit: false, user });
+
+if (session.isStaff) {
+  const overlay = init();
+}
+```
+
+Useful when the widget should appear only for a subset of users, or behind a
+feature flag, without paying for the mount in the meantime.
+
+## onReady is the safe point
+
+When the document is already parsed, the mount happens **inside the
+constructor** — before `createCommentOverlay()` has returned anything to assign.
+That is why `onReady` receives the instance:
+
+```js
+createCommentOverlay({
+  onReady: async (overlay) => {
+    const { orphaned } = overlay.loadComments(await api.get('/comments'));
+    if (orphaned) console.info(`${orphaned} comments lost their element`);
+  },
+});
+```
+
+`loadComments()` called earlier is not lost — the data is held and replayed at
+mount — but its counts come back as zeroes, because nothing has been resolved
+against the DOM yet.
+
+## Constructing the class directly
+
+```ts
+import { CommentOverlay } from 'helldots';
+
+const overlay = new CommentOverlay({ user: { name: 'Ana' } });
+```
+
+The constructor takes `Omit<CommentOverlayOptions, 'autoInit'>` — the flag only
+means something to the factory. There is no reason to prefer this over
+`createCommentOverlay`.
+
+## Module-level helpers
+
+Two exports exist so a host can read a deep link **before** an overlay exists —
+to fetch just that one comment.
+
+<TypeTable
+  type={{
+    DEFAULT_LINK_PARAM: {
+      type: 'string',
+      description: 'The default name of the query parameter carrying a comment id in "Copy link" URLs — "helldotsComment". Exported so the name never has to be written twice.',
+    },
+    readCommentLinkParam: {
+      type: '(param?, href?) => string | null',
+      description: 'The comment id the given URL asks for, or null. Both arguments default to DEFAULT_LINK_PARAM and location.href. A malformed URL yields null rather than throwing.',
+    },
+  }}
+/>
+
+```js
+import { readCommentLinkParam } from 'helldots';
+
+const id = readCommentLinkParam();
+const only = id ? [await api.get(`/comments/${id}`)] : [];
+```
+
+Pass the same `param` the widget was configured with if you overrode
+[`linkParam`](/docs/api/options#navigation--links).
+
+## Tearing it down
+
+```js
+overlay.cleanup();
+```
+
+Removes the widget entirely — markers, toolbar, listeners, shadow root. This is
+what makes the React pattern safe under a development double-mount, and what you
+call on logout.
+
+```jsx
+useEffect(() => {
+  const overlay = createCommentOverlay({ user });
+  return () => overlay.cleanup();
+}, [user]);
+```

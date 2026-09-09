@@ -1,0 +1,165 @@
+---
+title: Identidad y permisos
+description: A quién se atribuye un comentario, por qué el nombre visible viaja con el registro, y quién puede editarlo o borrarlo.
+icon: UserCheck
+---
+
+**HellDots no autentica a nadie.** Toma a quien tu aplicación diga que ha
+iniciado sesión, lo registra, y nunca lo comprueba. Todo en esta página se sigue
+de ahí.
+
+```js
+createCommentOverlay({
+  user: { name: currentUser.fullName, id: currentUser.id },
+});
+```
+
+- **`name`** es el nombre visible. Es lo que aparece en cada comentario,
+  respuesta y entrada de auditoría.
+- **`id`** es opcional, nunca se muestra, y se persiste como `authorId` en todo
+  lo que esa persona cree. Es también la clave con la que se guarda una reacción.
+
+```js
+overlay.serializeComments()[0];
+// { author: "Ana Pérez", authorId: "u_42", ... }
+```
+
+## Pasa un id si dos personas pueden compartir nombre
+
+Sin `id`, dos compañeras llamadas "Alex" son una sola autora: se pueden borrar
+los comentarios la una a la otra, comparten una reacción, y el registro de
+auditoría no las distingue. No hay arreglo para eso dentro del widget — la
+identidad tiene que venir de ti.
+
+Sin ningún `user`, todos los registros los escribe el mismo actor anónimo, lo cual
+es coherente: nunca se le oculta nada a nadie.
+
+### Una aplicación sin cuentas
+
+Acuña el id tú. Tú controlas la clave, su duración y la historia del
+consentimiento, cosa que HellDots no puede:
+
+```js
+const KEY = 'my-app-anon-id';
+let id = localStorage.getItem(KEY);
+if (!id) localStorage.setItem(KEY, (id = crypto.randomUUID()));
+
+createCommentOverlay({ user: { name: typedName, id } });
+```
+
+Ten presente qué identifica eso: un perfil de navegador, no a una persona.
+
+## El nombre viaja con el registro
+
+Ambos campos van en la salida de `serializeComments()`, tanto en comentarios como
+en respuestas. Es deliberado: un almacén que solo contenga comentarios — su
+propia base de datos, sin tabla de usuarios — muestra cada autor y cada entrada de
+auditoría **sin una sola consulta de vuelta a tu aplicación**.
+
+Lo que cuesta el nombre desnormalizado es que un cambio de nombre no viaja hacia
+atrás. Los comentarios antiguos conservan el nombre que estaba vigente cuando se
+escribieron, que es lo que debe hacer un registro de auditoría. El `id` es lo que
+te permite reconciliar si quieres el actual.
+
+`authorId` es `null` cuando no pasas `id`, y está ausente en registros escritos
+antes de que el campo existiera. Es aditivo — ningún corpus guardado necesita
+migración.
+
+## Identidad que se resuelve tarde
+
+Los datos de sesión suelen llegar después del primer pintado. `setUser` reemplaza
+la identidad a la que se atribuyen los registros nuevos, sin desmontar el widget:
+
+```js
+const overlay = createCommentOverlay({ persistence: 'localStorage' });
+
+const session = await auth.whoami();
+overlay.setUser({ name: session.name, id: session.userId });
+```
+
+Todo lo ya registrado conserva el autor con el que se escribió. Pasa `null` para
+volver al autor anónimo — al cerrar sesión, o al cambiar de espacio de trabajo.
+
+Devuelve `false`, sin cambiar nada, ante cualquier cosa que no sea `null` ni un
+objeto con un `name` no vacío. La alternativa antes de que existiera era
+`cleanup()` y reconstruir, lo que tira cada comentario cargado y el panel que
+estuviera abierto.
+
+## Quién puede editar y borrar
+
+Por defecto **puedes editar y borrar lo que lleve tu identidad, y nada más**. El
+comentario de otra persona simplemente no tiene Editar ni Borrar en su menú ⋯.
+
+La regla compara `authorId` contra tu `user.id`, recurriendo al nombre visible
+cuando ninguna de las dos partes tiene id.
+
+### Sobrescribir la regla
+
+Pasa `can` cuando la regla por defecto no sea la tuya — moderadores, un rol de
+propietario, una persona con acceso de solo lectura:
+
+```js
+createCommentOverlay({
+  user: { name: session.name, id: session.userId },
+  can: (action, target) => {
+    if (session.role === 'admin') return true;
+    if (session.role === 'viewer') return false;
+    return target.authorId === session.userId;
+  },
+});
+```
+
+`action` es una de cuatro:
+
+| Acción            | El target lleva                         |
+| ----------------- | --------------------------------------- |
+| `edit:comment`    | `{ id, author, authorId }`              |
+| `delete:comment`  | `{ id, author, authorId }`              |
+| `edit:reply`      | `{ id, author, authorId, commentId }`   |
+| `delete:reply`    | `{ id, author, authorId, commentId }`   |
+
+`commentId` está presente en las dos acciones de respuesta porque el id de una
+respuesta solo es único dentro de su hilo.
+
+<Callout type="warn" title="Devuelve literalmente true para permitir">
+  Cualquier otra cosa deniega — incluido el `undefined` de una rama que se olvidó
+  de devolver algo. Un `can` que lanza también deniega, avisando por consola. Un
+  predicado de permisos es el sitio equivocado para ser generoso.
+</Callout>
+
+Solo se pregunta por esas cuatro acciones. **Estado, tipo, prioridad, etiquetas,
+reacciones y responder quedan abiertos para todo el mundo** — el triaje es trabajo
+compartido, y todo él es reversible.
+
+### Consultar la misma regla desde tu interfaz
+
+Si pones un botón de borrar en tu propia interfaz, pregúntale al widget en lugar
+de mantener una segunda copia de la regla en sincronía:
+
+```js
+overlay.can('delete:comment', { id, author, authorId }); // → boolean
+```
+
+### Tus propias llamadas nunca se rechazan
+
+`can` regula los menús del widget y las mutaciones que vienen de un clic dentro
+de él. `overlay.deleteComment(id)` desde tu código siempre pasa — así que un
+flujo de moderación que tu backend ya autorizó no queda bloqueado por una regla
+de cliente a la que supera en rango.
+
+<Callout type="error" title="Esto no es autorización">
+  HellDots corre dentro de la página. Cualquiera con una consola llega a la API
+  directamente, devuelva lo que devuelva `can`. Lo que elimina es el camino
+  accidental — el botón que nunca debió ofrecerse.
+
+  La aplicación real de las reglas va en tu servidor: comprueba `authorId` contra
+  la sesión cuando el evento `comment:deleted` o `comment:edited` llegue a tu
+  backend.
+</Callout>
+
+## Qué afirma el registro
+
+El registro de auditoría anota el `user` que tu aplicación declaró en el momento
+de cada acción. Dice lo que tu aplicación afirmó sobre quién actuó — no un hecho
+verificado. Si necesitas la afirmación más fuerte, verifícala en tu propio
+backend; `onChange` lleva cada mutación hasta allí.

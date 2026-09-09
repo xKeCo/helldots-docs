@@ -1,0 +1,306 @@
+---
+title: Captures
+description: What a HellDots screenshot actually is, why it can be slow, the four levers over its cost, and how to keep images out of your database.
+icon: Camera
+---
+
+Every new comment records a viewport screenshot and an environment snapshot,
+unless you turn that off. Dragging a region additionally attaches a
+full-resolution PNG crop of exactly what was selected, on top of the automatic
+capture.
+
+## A screenshot is not a screen grab
+
+This is the fact everything else on this page follows from: **the browser
+exposes no way to rasterise the painted page from JavaScript.** There is no API
+for "give me what is on screen".
+
+So the capture is a re-render. HellDots clones the DOM, reads every element's
+computed style, inlines the images and fonts, serialises the result into an SVG
+`<foreignObject>` and rasterises that. Two consequences:
+
+- **Anything the re-render cannot reach is missing from the image.** A
+  cross-origin stylesheet, a font it cannot read, an asset that does not answer.
+- **The cost scales with your DOM, not with your screen.** A visually simple
+  page with twelve thousand nodes is expensive; a busy-looking page with two
+  hundred is not.
+
+The widget's own UI is excluded from the capture, so the toolbar never ends up
+inside the image.
+
+## Nothing waits for it
+
+Clicking or dragging places the marker and opens the comment box **immediately**.
+The render runs behind it and the images drop in when they land — a dragged
+region shows a "Capturing…" slot in the attachment strip until its crop arrives,
+and Send waits for it if you get there first.
+
+The capture also hands the main thread back to the browser every 8 ms, so the
+page keeps painting and accepting keystrokes even on a render that runs for a
+second. Both behaviours are always on; there is nothing to configure, and
+between them a slow capture is a background inconvenience rather than a freeze.
+
+## The levers
+
+Four options change what a capture costs. None is on by default, and each
+trades something specific.
+
+<TypeTable
+  type={{
+    fastCapture: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Read a curated list of style properties instead of all ~527. Measured at ~2.7× off the style phase on a 12,000-element page.',
+    },
+    skipIframeContent: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Render same-origin iframes blank instead of cloning their documents. Measured at 82 ms against 2,374 ms on one 9,000-node frame.',
+    },
+    captureTimeout: {
+      type: 'number',
+      default: '30000',
+      description: 'Milliseconds one remote asset may hold a capture up. The real cost is ~2× this number.',
+    },
+    embedCrossOriginFonts: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Re-fetch unreadable stylesheets so their web fonts reach the capture.',
+    },
+  }}
+/>
+
+### fastCapture
+
+Reading the styles *is* the render. A browser exposes around 527 computed
+properties per element and the renderer reads all of them — on a page with a few
+thousand live nodes that is hundreds of thousands of property reads, and about
+**91% of a capture's total cost**.
+
+```js
+createCommentOverlay({ fastCapture: true });
+```
+
+This narrows the enumeration to a curated list of the properties that change a
+pixel. Measured at ~2.7× off that phase on a 12,000-element page, and
+pixel-identical to a full capture on the pages it was verified against.
+
+<Callout type="warn" title="The list is a fidelity contract">
+  It is off by default because no list is provably complete for a page the
+  library has never seen: **a property it does not name is simply absent from
+  the image.** Turn it on for a heavy page, look at one capture before trusting
+  it, and [open an issue](https://github.com/xKeCo/helldots/issues) if something
+  comes out wrong — the fix is one more entry in the list.
+</Callout>
+
+### skipIframeContent
+
+An iframe's cost is invisible from the outside. The renderer walks into a
+same-origin frame and clones its whole document, so a page that reports 242
+elements can be a capture of 9,245.
+
+```js
+createCommentOverlay({ skipIframeContent: true });
+```
+
+The `<iframe>` element itself is **kept** — its box, its border, the space it
+occupies. That matters more than it sounds: removing the element instead would
+slide everything below it up by the frame's height while the crop is still taken
+at live page coordinates, putting the bottom of every capture out of register.
+
+A cross-origin frame has nothing to gain here. The renderer cannot read into it,
+so it is already blank in the output — and, contrary to a common guess, it does
+not stall or wait on one either.
+
+### captureTimeout
+
+To inline the page's images and fonts the renderer re-fetches them, giving each
+one an `AbortController` set to 30 seconds. A URL that never answers stalls the
+capture until that fires. The capture still succeeds — that asset becomes a
+transparent placeholder — but it waits first.
+
+The wait is **bounded, not multiplied**: one dead asset and ten cost the same,
+because they are waited on concurrently. What it is *not* is one times the
+timeout. The setting drives two waits in sequence on the same asset — first for
+the image already on the page to finish loading, then for the fetch that inlines
+it — so the real cost is a consistent ~2×. **The 30 second default is therefore
+about a minute.**
+
+```js
+createCommentOverlay({ captureTimeout: 5000 }); // ≈ 10 seconds
+```
+
+It is left at the default because lowering it trades a slow capture for a
+silently incomplete one: an asset that was only slow, rather than dead, gets
+dropped and leaves a hole with nothing to say so. These are assets your page has
+already loaded, so most come from cache instantly and the tail is exactly the
+large or uncached ones you would be wrong to drop.
+
+<Callout type="warn" title="Two values that do the opposite of what you mean">
+  Only a finite positive number is honoured. Both values a host would reach for
+  to mean "no deadline" are ignored: the renderer reads `0` as *never give up*,
+  and `setTimeout` coerces `Infinity` to `0`, which aborts every asset
+  immediately.
+</Callout>
+
+### Web fonts and embedCrossOriginFonts
+
+A font loaded through a cross-origin `<link>` — Google Fonts and friends — is
+one of the things the re-render cannot reach. Reading `cssRules` on such a
+stylesheet throws `SecurityError`, so its `@font-face` never gets into the
+capture and the text comes out in a fallback face.
+
+That is not only cosmetic. The fallback's metrics differ, so glyphs sit at
+different positions than they do on screen, and **a drag selection tight around
+a few letters can come back holding the wrong ones**.
+
+Three ways out, cheapest first:
+
+<Steps>
+
+<Step>
+
+#### Fix it at the source
+
+Self-host the font, or add `crossorigin` to the `<link>`. The stylesheet becomes
+readable, the capture matches the page, and nothing extra is fetched at capture
+time. This is the one to reach for.
+
+</Step>
+
+<Step>
+
+#### Let HellDots re-fetch it
+
+```js
+createCommentOverlay({ embedCrossOriginFonts: true });
+```
+
+The same URLs the page already loaded, cached per session, handed to the
+renderer. Off by default because a comment widget making third-party requests on
+your users' behalf should be your call.
+
+</Step>
+
+<Step>
+
+#### Leave it
+
+Captures of such a page stay misaligned where text is concerned. Everything else
+about them is correct.
+
+</Step>
+
+</Steps>
+
+## Very long pages
+
+Browsers cap how large a canvas can be — 65,535 pixels in a dimension in
+Chromium, less in Firefox, and a separate, much lower *area* cap on mobile
+Safari. A page past that cap cannot be rendered at full scale.
+
+HellDots fits the scale to what the browser will actually paint, and checks that
+the result holds pixels before using it. Nothing below the cap changes. Past it
+the capture goes soft in proportion: a 68,000px page renders at 0.96, a
+140,000px page at 0.47. If even the smallest attempt comes back empty, the
+capture fails through `onError` rather than attaching a blank image.
+
+## Turning captures off
+
+```js
+createCommentOverlay({ autoScreenshot: false });
+```
+
+No viewport capture, no environment snapshot. The render costs a moment on every
+comment and some apps would rather not pay it — a page behind authentication
+whose screenshots would be a liability is another good reason.
+
+Dragging a region still attaches its crop: that one was asked for.
+
+## Swapping images for URLs
+
+Every image is stored as a base64 data URL inside the record — around 33 KB for
+the automatic capture alone. `transformScreenshot` is where you replace it with
+something of your own.
+
+```js
+createCommentOverlay({
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url; // stored in place of the data URL
+  },
+});
+```
+
+It runs for **every image the widget acquires**: the automatic capture
+(`kind: "context"`), a drag-crop region, and anything attached through the file
+picker on a comment or a reply (`kind: "attachment"`). The two kinds exist so the
+disposable one and the deliberate one can go to different buckets with different
+retention.
+
+<Callout type="warn" title="A URL you hand back is an upload, not a record">
+  It runs at two different moments and `kind` does not tell them apart.
+  Everything on a *comment* transforms when the comment is saved; an attachment
+  on a *reply* transforms when the file is picked, because `addReply()` is
+  synchronous and cannot wait on your upload.
+
+  So a reply attachment can be uploaded and then never referenced — the user
+  closes the popover without sending — and a comment can do the same in a
+  narrower window, by being dismissed while its upload is in flight. **Sweep for
+  unreferenced blobs.**
+</Callout>
+
+It is **fail-open**. If your upload rejects, throws, or resolves to anything
+that is not a non-empty string, the original data URL is kept and you get
+`onError(error, "transform")`. Receiving a large record is better than losing
+somebody's comment.
+
+It is not called for records you pass to `loadComments()`, nor for screenshots
+you hand to `addReply()` yourself — in both cases the strings are already yours.
+
+## What else is captured
+
+Alongside the image, every comment carries a `context` snapshot:
+
+```json
+{
+  "version": 1,
+  "url": "https://example.com/pricing",
+  "viewport": { "width": 390, "height": 844 },
+  "screen": { "width": 390, "height": 844 },
+  "devicePixelRatio": 3,
+  "userAgent": "Mozilla/5.0 (iPhone; …)",
+  "browser": { "name": "Safari", "version": "17.2" },
+  "os": { "name": "iOS", "version": "17.2" },
+  "language": "es-CO"
+}
+```
+
+The raw user agent is always stored, even when the browser and OS parsing
+fails — so a device nobody anticipated still leaves something to work from.
+
+## Handing a comment to a coding agent
+
+Every comment has a **copy** button that puts a plain-text context block on the
+clipboard, built for pasting into an AI coding assistant:
+
+```text
+Page: /pricing
+Viewport: 1440x900
+Anchor state: anchored
+Status: open
+Selector: #plans > div.card:nth-child(2) > button
+Element: <button class="cta" data-plan="pro">
+DOM path: body > main.layout > section#plans > div.card > button.cta
+Nearby text: "Upgrade to Pro"
+Comment by Ana (2026-07-29T10:14:00.000Z):
+"This button does nothing on mobile"
+Type: bug
+Priority: high
+Tags: checkout, ios
+URL: https://example.com/pricing
+Screen: 390x844
+Browser: Safari 17.2
+OS: iOS 17.2
+```

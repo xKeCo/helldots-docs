@@ -1,0 +1,325 @@
+---
+title: Frameworks
+description: Next.js, React, Vue, Astro, SvelteKit and a plain script tag — plus the one call every client-side router has to make.
+icon: Blocks
+---
+
+HellDots is framework-agnostic: it is a function that mounts a widget and
+returns an object. What differs between frameworks is only *where* you call it
+and *when* you tell it the page changed.
+
+## Server-rendered apps
+
+Importing the package on the server is safe — nothing touches the DOM at import
+time. Calling `createCommentOverlay` on the server is not. Keep the call on the
+client:
+
+<Tabs items={['Next.js (App Router)', 'Remix / React Router', 'Astro']}>
+
+<Tab value="Next.js (App Router)">
+
+```tsx title="components/comments.tsx"
+'use client';
+
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }: { user: { name: string; id?: string } }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+Render it from the root layout, and see [SPAs](#single-page-apps) below for the
+router wiring — the App Router is one.
+
+</Tab>
+
+<Tab value="Remix / React Router">
+
+```jsx title="app/root.jsx"
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="Astro">
+
+```astro title="src/layouts/Base.astro"
+<script>
+  import { createCommentOverlay } from 'helldots';
+
+  createCommentOverlay({
+    user: { name: 'Ana' },
+    persistence: 'localStorage',
+  });
+</script>
+```
+
+An Astro `<script>` is client-side and bundled, so the import resolves the same
+way it does anywhere else. With View Transitions enabled, call
+`notifyNavigation()` from `astro:page-load`.
+
+</Tab>
+
+</Tabs>
+
+<Callout type="warn" title="cleanup() is what makes this safe">
+  React runs effects twice in development. Returning `overlay.cleanup()` from
+  the effect removes the widget entirely, so the second mount does not leave you
+  with two toolbars. It is also what you want on logout, or when the component
+  unmounts for any other reason.
+</Callout>
+
+## Single-page apps
+
+A client-side router swaps the DOM without a page load. HellDots cannot see
+that happen, so two things have to be wired.
+
+```js
+const overlay = createCommentOverlay({
+  user,
+  persistence: 'localStorage',
+
+  // 1. Let the widget's own cross-page jumps use your router.
+  navigate: (page) => router.push(page),
+});
+
+// 2. Tell the widget after every route render.
+router.afterEach(() => overlay.notifyNavigation());
+```
+
+**`navigate`** is used by the inbox's "view on its page" jump. Without it, that
+jump is a full page load, which throws away your app's state.
+
+**`notifyNavigation()`** reclassifies every comment against the new pathname,
+re-resolves anchors against the new DOM, rebuilds the markers, and moves the
+inbox onto the new page. It returns the same `{ anchored, orphaned, inactive }`
+counts `loadComments()` does.
+
+Call it after the new route has actually painted, not before — the elements have
+to exist for anchors to resolve against them.
+
+<Callout type="warn" title="Do not schedule it on requestAnimationFrame alone">
+  Two `requestAnimationFrame`s is the natural way to say "after the browser has
+  laid this out", and it is right — until the tab is hidden. **A hidden tab
+  never paints, so its `requestAnimationFrame` never fires at all**, and a
+  navigation that happens while somebody is looking at another tab leaves the
+  widget pointing at the previous page.
+
+  Layout is still computed in a hidden tab, so give the frame a deadline rather
+  than a longer wait — whichever arrives first wins. There is a
+  [worked `onNextPaint` helper](/docs/playground#how-this-site-does-it) on the
+  playground page; this site uses it.
+</Callout>
+
+### Back and forward
+
+```js
+createCommentOverlay({ autoDetectNavigation: true });
+```
+
+Opt-in, and `popstate`-only: it covers the browser's back and forward buttons.
+`pushState` routing fires no `popstate`, so your router's own hook is still
+required. Wire both.
+
+<Tabs items={['Next.js App Router', 'React Router', 'Vue Router', 'SvelteKit']}>
+
+<Tab value="Next.js App Router">
+
+```tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { createCommentOverlay, type CommentOverlay } from 'helldots';
+
+export function Comments() {
+  const [overlay, setOverlay] = useState<CommentOverlay | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    const instance = createCommentOverlay({
+      persistence: 'localStorage',
+      autoDetectNavigation: true,
+      navigate: (page) => router.push(page),
+      onReady: setOverlay,
+    });
+    return () => instance.cleanup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!overlay) return;
+    // Two frames: let the new route paint before resolving anchors against it.
+    const frame = requestAnimationFrame(() =>
+      requestAnimationFrame(() => overlay.notifyNavigation()),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [overlay, pathname]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="React Router">
+
+```jsx
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router';
+
+function Comments() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const overlayRef = useRef(null);
+
+  useEffect(() => {
+    overlayRef.current = createCommentOverlay({
+      persistence: 'localStorage',
+      autoDetectNavigation: true,
+      navigate: (page) => navigate(page),
+    });
+    return () => overlayRef.current?.cleanup();
+  }, []);
+
+  useEffect(() => {
+    overlayRef.current?.notifyNavigation();
+  }, [location.pathname]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="Vue Router">
+
+```js
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  persistence: 'localStorage',
+  autoDetectNavigation: true,
+  navigate: (page) => router.push(page),
+});
+
+router.afterEach(async () => {
+  await nextTick();
+  overlay.notifyNavigation();
+});
+```
+
+</Tab>
+
+<Tab value="SvelteKit">
+
+```js
+import { afterNavigate } from '$app/navigation';
+import { goto } from '$app/navigation';
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  persistence: 'localStorage',
+  autoDetectNavigation: true,
+  navigate: (page) => goto(page),
+});
+
+afterNavigate(() => overlay.notifyNavigation());
+```
+
+</Tab>
+
+</Tabs>
+
+### Re-anchoring without navigating
+
+`notifyNavigation()` is also the "re-anchor now" primitive. If your app replaced
+a route's DOM without changing the URL — a tab switch, a data refresh that
+rebuilds a list — call it and the comments find their elements again.
+
+```js
+await refetchDashboard();
+overlay.notifyNavigation();
+```
+
+## No bundler
+
+The UMD build defines a `HellDots` global and carries the screenshot renderer
+inside it:
+
+```html
+<script src="https://unpkg.com/helldots@0.12.0"></script>
+<script>
+  const overlay = HellDots.createCommentOverlay({
+    user: { name: 'Ana' },
+    persistence: 'localStorage',
+  });
+</script>
+```
+
+<Callout type="warn" title="unpkg serves the UMD build by default">
+  The package's `unpkg` field points at `dist/helldots.umd.js`, so
+  `https://unpkg.com/helldots` — with or without `?module` — is the UMD file. It
+  assigns a global and exports nothing, so `import`ing that URL will not work.
+</Callout>
+
+For native ESM with no build step, use a CDN that resolves bare specifiers, so
+the dynamic `import("modern-screenshot")` inside the package has somewhere to
+go:
+
+```html
+<script type="module">
+  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.0';
+
+  createCommentOverlay({ persistence: 'localStorage' });
+</script>
+```
+
+Serving `dist/helldots.esm.js` directly from unpkg or jsDelivr works too, but
+then the peer dependency is yours to resolve — with an import map:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "modern-screenshot": "https://esm.sh/modern-screenshot@4"
+    }
+  }
+</script>
+<script type="module">
+  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.0/dist/helldots.esm.js';
+
+  createCommentOverlay({ persistence: 'localStorage' });
+</script>
+```
+
+## Deferring the mount
+
+By default `createCommentOverlay` mounts immediately. Pass `autoInit: false` and
+you get an initializer back instead — useful when the widget should appear only
+for signed-in staff, or behind a feature flag.
+
+```js
+const init = createCommentOverlay({ autoInit: false, user });
+
+if (session.isStaff) {
+  const overlay = init();
+}
+```

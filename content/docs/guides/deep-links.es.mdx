@@ -1,0 +1,86 @@
+---
+title: Enlaces directos
+description: Comparte una URL que abre un comentario concreto — incluido uno que el widget todavía no ha cargado.
+icon: Link
+---
+
+Cada comentario tiene una acción de **Copiar enlace**. La URL que produce es la
+página actual más un parámetro de consulta con el id del comentario; abrirla en
+cualquier sitio arranca el widget y abre la bandeja sobre ese comentario.
+
+```js
+overlay.commentLink(id);
+// → "https://example.com/pricing?helldotsComment=V1StGXR8_Z5jdHi6B-myT"
+// → null cuando el id es desconocido
+```
+
+## Renombrar el parámetro
+
+```js
+createCommentOverlay({ linkParam: 'comment' });
+```
+
+Por defecto es `helldotsComment`. Cámbialo cuando tu aplicación ya enrute con ese
+nombre — el widget lee de vuelta el que hayas configurado.
+
+## Leerlo antes de que exista el widget
+
+Un corpus demasiado grande para enviarlo en cada carga de página hay que traerlo
+por página. Eso funciona hasta que alguien comparte un enlace a un comentario que
+no está en el conjunto traído.
+
+El lector del parámetro está exportado, así que puedes mirar antes de que exista
+una capa — y no escribir nunca dos veces el nombre del parámetro:
+
+```js
+import { readCommentLinkParam, DEFAULT_LINK_PARAM } from 'helldots';
+
+DEFAULT_LINK_PARAM; // "helldotsComment"
+
+const id = readCommentLinkParam(); // lee location.href por defecto
+const solo = id ? [await api.get(`/comments/${id}`)] : [];
+```
+
+Ambos argumentos son opcionales: `readCommentLinkParam(param?, href?)`. Pasa el
+mismo `param` con el que se configuró el widget. Una URL mal formada devuelve
+`null` en lugar de lanzar.
+
+## Cargar bajo demanda el comentario enlazado
+
+La otra mitad del mismo problema, resuelta por el widget: `onCommentRequested` se
+dispara cuando un enlace apunta a un comentario que el widget no tiene — **una vez
+por id, no una vez por intento**.
+
+```js
+const overlay = createCommentOverlay({
+  onCommentRequested: async (id) => {
+    overlay.loadComments([await api.get(`/comments/${id}`)]);
+  },
+});
+
+overlay.loadComments(await api.get(`/comments?page=${location.pathname}`));
+```
+
+Devuelve una promesa y el enlace se reintenta cuando se resuelva — la bandeja se
+abre sobre el comentario en cuanto llega. Hasta entonces dice que no se encontró,
+en lugar de no hacer nada.
+
+Sin ningún manejador, la bandeja se abre igualmente e informa de que el
+comentario no se encontró. Un manejador que lance o rechace llega a
+[`onError(error, "link")`](/es/docs/api/events#onerror).
+
+## Un comentario en otra página
+
+La bandeja lista comentarios de todas las páginas, no solo de la que estás. Su
+acción de "ver en su página" navega hasta allí — por defecto con una recarga
+completa, que tira por la borda el estado de una aplicación de una sola página.
+
+```js
+createCommentOverlay({
+  navigate: (page) => router.push(page),
+});
+```
+
+Entrégale el push de tu router, y llama a `notifyNavigation()` una vez la ruta se
+haya renderizado. Mira
+[frameworks](/es/docs/guides/frameworks#aplicaciones-de-una-sola-página).

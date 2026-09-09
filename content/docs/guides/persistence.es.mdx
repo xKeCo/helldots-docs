@@ -1,0 +1,150 @@
+---
+title: Persistencia
+description: Guarda los comentarios en el navegador, en tu propio almacén, o reconcilia los dos — y ten claro a qué renuncia cada modo.
+icon: Database
+---
+
+HellDots no tiene backend. Los comentarios viven donde tú decidas ponerlos, y
+hay exactamente dos mecanismos: el modo `localStorage` incorporado y los
+callbacks.
+
+## Modo localStorage
+
+```js
+createCommentOverlay({ persistence: 'localStorage' });
+```
+
+Todo se guarda y se restaura automáticamente, bajo una única clave compartida
+por todas las páginas de tu aplicación. Es la elección correcta para un entorno
+de staging, una revisión de diseño, una demo — cualquier sitio donde los
+comentarios sean de una persona en una máquina y perderlos sea asumible.
+
+Lo que cuesta:
+
+- **Unos 5 MB, impuestos por el navegador.** Eso es del orden de un centenar de
+  comentarios con capturas, ya que una sola captura automática son ~33 KB en
+  base64.
+- **Un navegador, un perfil.** Nada cruza hacia una compañera, otro dispositivo
+  o una ventana privada.
+- **Una pestaña activa por página.** Las escrituras de otra pestaña se conservan
+  en la siguiente sincronización, pero dos pestañas editando el mismo comentario
+  se resuelven por última escritura, y un comentario borrado en una pestaña puede
+  reaparecer si otra que todavía lo tiene en memoria guarda después.
+
+### Cuando se agota la cuota
+
+HellDots no falla sin más. Descarta las capturas **automáticas** de los
+comentarios más antiguos y reintenta, así que los comentarios en sí sobreviven al
+apretón. Las capturas que alguien adjuntó a propósito — un recorte arrastrado, un
+archivo del selector — nunca se descartan.
+
+Si aun así la escritura no se puede hacer, te enteras:
+
+```js
+createCommentOverlay({
+  persistence: 'localStorage',
+  onError: (error, context) => {
+    if (context === 'storage') {
+      // La copia de este navegador ya diverge de lo que hay en pantalla.
+      toast.warn('No se pudieron guardar los comentarios localmente.');
+    }
+  },
+});
+```
+
+## Tu propio almacén
+
+Deja `persistence` en su valor por defecto, `"none"`, y el widget no guarda
+nada. Cada mutación te llega como un evento; cada comentario es JSON plano.
+
+```js
+const overlay = createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+  onReady: async (o) => o.loadComments(await api.get('/comments')),
+});
+```
+
+El viaje de ida y vuelta es simétrico por diseño: la salida de
+`serializeComments()` va directa a tu API, y vuelve tal cual a `loadComments()`.
+
+```js
+await api.put('/comments', overlay.serializeComments());
+```
+
+<Callout title="Carga desde onReady">
+  Un `loadComments()` llamado antes de que el widget haya montado no se pierde —
+  los datos se retienen y se aplican al montar. Pero las cuentas que devuelve son
+  ceros, porque todavía no se ha resuelto nada contra el DOM. `onReady` se
+  dispara una vez terminado el montaje, cuando todos los métodos son seguros.
+</Callout>
+
+### Qué devuelve loadComments
+
+```js
+const { anchored, orphaned, inactive } = overlay.loadComments(records);
+```
+
+| Cuenta     | Significado                                                     |
+| ---------- | ---------------------------------------------------------------- |
+| `anchored` | Resueltos contra un elemento de la página actual                |
+| `orphaned` | Pertenecen a esta página, pero su elemento ya no está           |
+| `inactive` | Pertenecen a una página distinta de la que está abierta         |
+
+`orphaned` es el número que conviene vigilar. Un salto ahí después de un
+despliegue significa que una refactorización movió los elementos sobre los que la
+gente venía comentando.
+
+### Reconciliar tras borrados remotos
+
+`loadComments()` reemplaza por id, pero nunca elimina: un comentario que borraste
+en el servidor sigue en pantalla porque nada le dijo al widget que ya no está. La
+primitiva para eso es un reinicio en bloque.
+
+```js
+overlay.clearComments(); // marcadores, memoria y la copia en localStorage
+overlay.loadComments(await api.get('/comments'));
+```
+
+`clearComments()` a propósito no dispara callbacks por comentario — es un
+reinicio, no cien borrados, y devolvérselos a tu backend es justo lo que no
+quieres aquí.
+
+## Los dos a la vez
+
+Nada impide combinarlos. `persistence: "localStorage"` más un conjunto de
+callbacks te da una caché offline que además sincroniza — pero entonces el
+conflicto es tuyo:
+
+```js
+createCommentOverlay({
+  persistence: 'localStorage',
+  onChange: (event) => {
+    if (event.origin === 'host') return; // escritura nuestra, devuelta en eco
+    void queue.push(event);
+  },
+});
+```
+
+La guarda de `origin` no es opcional aquí. Aplicar un cambio remoto significa
+llamar al mismo método que llama la interfaz, lo cual emite, lo cual lo manda de
+vuelta — mira [tiempo real y multiusuario](/es/docs/guides/realtime).
+
+## Mantener las capturas fuera del registro
+
+En cualquiera de los dos modos, cada imagen es una data URL en base64 viviendo
+dentro del comentario. Es lo primero que se descarta bajo presión de
+`localStorage`, y en tu propia base de datos son 33 KB de cadena por comentario
+en la columna que guarde el JSON.
+
+[`transformScreenshot`](/es/docs/guides/captures#cambiar-imágenes-por-urls) es
+donde la cambias por una URL a tu propio almacenamiento de objetos.
+
+```js
+createCommentOverlay({
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url;
+  },
+});
+```

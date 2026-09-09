@@ -1,0 +1,15 @@
+{
+  "title": "Documentación",
+  "root": true,
+  "pages": [
+    "---Primeros pasos---",
+    "index",
+    "installation",
+    "quickstart",
+    "playground",
+    "---Guías---",
+    "...guides",
+    "---Referencia de la API---",
+    "...api"
+  ]
+}

@@ -1,0 +1,314 @@
+---
+title: Types
+description: Every exported type — the record shapes, the anchor, the context snapshot, the audit trail and the metrics.
+icon: FileType
+---
+
+TypeScript definitions ship with the package. There is no `@types` install.
+
+```ts
+import type {
+  Comment,
+  SerializedComment,
+  CommentReply,
+  CommentAnchor,
+  CommentAnchorFingerprint,
+  CommentContext,
+  CommentMetrics,
+  CommentId,
+  CommentStatus,
+  CommentType,
+  CommentPriority,
+  AnchorState,
+  AuditEvent,
+  AuditActor,
+  AuditEventType,
+  PermissionAction,
+  PermissionTarget,
+  ChangeEvent,
+  ChangeMeta,
+  ChangeOrigin,
+  StatusChangeMeta,
+  UpdateMeta,
+  ErrorContext,
+  CommentOverlayOptions,
+} from 'helldots';
+```
+
+## CommentId
+
+```ts
+type CommentId = string | number;
+```
+
+New ids are 21-character nanoid strings. The `number` arm is **not legacy cruft
+to be removed later**: comments created before that change are still sitting in
+hosts' `localStorage` and in their own back ends, and they keep resolving.
+
+<Callout type="warn" title="Compare with String()">
+  Use `String(a) === String(b)` rather than `===` when either side may have
+  crossed a JSON or URL boundary — a numeric id read out of a query string is a
+  string.
+</Callout>
+
+## The unions
+
+```ts
+type CommentStatus = 'open' | 'in_progress' | 'in_review' | 'resolved';
+type CommentType = 'bug' | 'suggestion' | 'question' | 'improvement';
+type CommentPriority = 'high' | 'medium' | 'low';
+type AnchorState = 'anchored' | 'orphaned' | 'inactive';
+type ChangeOrigin = 'user' | 'host';
+type ErrorContext = 'capture' | 'storage' | 'load' | 'link' | 'transform';
+type AuditEventType = 'created' | 'edited' | 'status' | 'classified';
+type PermissionAction =
+  | 'edit:comment'
+  | 'delete:comment'
+  | 'edit:reply'
+  | 'delete:reply';
+```
+
+`type` and `priority` are each `T | null` on a record. **`null` is a value, not
+an absence** — it means deliberately unclassified.
+
+## SerializedComment
+
+The JSON-safe shape: what `serializeComments()` produces and what
+`loadComments()` takes.
+
+```ts
+interface SerializedComment {
+  /** Stamped as 1 by serializeComments; absent on payloads persisted before it existed. */
+  schemaVersion?: number;
+  id: CommentId;
+  text: string;
+  /** ISO timestamp of the last edit; null when never edited. */
+  editedAt?: string | null;
+  anchor: CommentAnchor | null;
+  /** location.pathname where the comment was created. */
+  page: string;
+  /** Append-only audit trail. Optional and absent by default. */
+  history?: AuditEvent[] | null;
+  replies: CommentReply[];
+  author: string;
+  /** From the user.id declared at creation. Never rendered. */
+  authorId?: string | null;
+  createdAt: string;
+  screenshots: string[];
+  status: CommentStatus;
+  type: CommentType | null;
+  priority: CommentPriority | null;
+  tags: string[];
+  /** Set on entering "resolved", cleared on leaving it. */
+  resolvedAt: string | null;
+  context: CommentContext | null;
+  /** The automatic viewport capture, as a JPEG data URL. */
+  contextScreenshot: string | null;
+  /** emoji → the actor keys that reacted. Null when nobody has. */
+  reactions: Record<string, string[]> | null;
+}
+```
+
+Several fields are **optional and absent by default** — `history`, `authorId`,
+`editedAt`, `schemaVersion`. Records written before they existed simply have
+none, so no migration is involved. `null` rather than `[]` or `{}` keeps an
+untouched corpus free of extra bytes.
+
+## Comment
+
+The live shape on `overlay.comments`. Everything `SerializedComment` has, plus
+four runtime-only fields that do not serialise:
+
+```ts
+interface Comment {
+  // …every field of SerializedComment except schemaVersion…
+
+  /** Live anchor element; null while orphaned or inactive. */
+  container: HTMLElement | null;
+  relativeX: number;
+  relativeY: number;
+  anchorState: AnchorState;
+  /** The anchor element currently has zero size. */
+  hidden: boolean;
+  /** The exact element the user clicked on. */
+  target?: HTMLElement | null;
+}
+```
+
+Use `serializeComments()` for anything that leaves the page.
+
+## CommentReply
+
+```ts
+interface CommentReply {
+  id: CommentId;
+  text: string;
+  author: string;
+  authorId?: string | null;
+  timestamp: string;
+  screenshots?: string[];
+  editedAt?: string | null;
+  reactions?: Record<string, string[]> | null;
+}
+```
+
+A reply's id is unique **only inside its thread**, which is why `deleteReply`,
+`editReply` and `toggleReplyReaction` all take the comment id as well.
+
+Note `timestamp`, not `createdAt` — replies predate the field naming on
+comments.
+
+## CommentAnchor
+
+How a comment finds its element again after the page has changed.
+
+```ts
+interface CommentAnchor {
+  version: 1;
+  /** Best-effort unique CSS selector, or null when none could be generated. */
+  selector: string | null;
+  /** Selector for the exact clicked element when deeper than the container. */
+  targetSelector?: string | null;
+  fingerprint: CommentAnchorFingerprint;
+  /** Fraction (0–1) of the anchor element's box, captured at creation. */
+  relativeX: number;
+  relativeY: number;
+}
+
+interface CommentAnchorFingerprint {
+  tagName: string;
+  /** First ~64 chars of the element's normalized textContent. */
+  textSnippet: string;
+  /** Stable attributes only — id, name, role, aria-label, non-framework data-*. */
+  attributes: Record<string, string>;
+  /** 0-based position among same-tag siblings at creation time. */
+  siblingIndex: number;
+  siblingCount: number;
+}
+```
+
+The fingerprint is what survives a selector going stale. Framework-generated
+`data-*` attributes are deliberately excluded — they change on every build and
+would make the fingerprint worthless.
+
+## CommentContext
+
+The environment snapshot, taken at creation.
+
+```ts
+interface CommentContext {
+  version: 1;
+  /** Full location.href at creation time. */
+  url: string;
+  viewport: { width: number; height: number };
+  /** screen.width / screen.height. */
+  screen: { width: number; height: number };
+  devicePixelRatio: number;
+  /** Always stored, even when browser/os parsing fails. */
+  userAgent: string;
+  browser: { name: string; version: string };
+  os: { name: string; version: string };
+  language: string;
+}
+```
+
+## AuditEvent
+
+```ts
+interface AuditActor {
+  /** From user.id, when the host supplies one. Never rendered. */
+  id?: string;
+  /** The display name at the time of the action. */
+  name: string;
+}
+
+interface AuditEvent {
+  type: AuditEventType;
+  /** ISO timestamp, from the acting client's clock. */
+  at: string;
+  actor: AuditActor;
+  /** "classified" only: which field moved. */
+  field?: 'type' | 'priority' | 'tags';
+  /** Both ends of the transition. Absent for "created", "edited" and tag changes. */
+  from?: string | null;
+  to?: string | null;
+}
+```
+
+`null` in `from`/`to` is a value, not an absence — it is how type and priority
+read when deliberately unset.
+
+Timestamps come from the acting client's clock, so merging corpora written on
+machines whose clocks disagree can produce an entry that predates the comment it
+belongs to. Durations derived from these are clamped at zero rather than rendered
+negative.
+
+## CommentMetrics
+
+```ts
+interface CommentMetrics {
+  total: number;
+  byStatus: Record<CommentStatus, number>;
+  /** `unset` holds the comments left deliberately unclassified. */
+  byType: Record<CommentType | 'unset', number>;
+  /** `unset` holds the comments left deliberately unprioritised. */
+  byPriority: Record<CommentPriority | 'unset', number>;
+  /** Only the days that saw activity — gaps are not filled. */
+  overTime: Array<{ date: string; count: number }>;
+  resolution: {
+    resolvedCount: number;
+    /** Comments that were resolved, reopened and resolved again. */
+    reopenedCount: number;
+    /** Of the resolution currently in force; null when nothing is resolved. */
+    averageMs: number | null;
+    medianMs: number | null;
+  };
+}
+```
+
+Every bucket is present even when empty, so a consumer can index it without
+guarding — an absent key and a zero would otherwise be indistinguishable.
+
+## PermissionTarget
+
+What `can` is told about the record an action would affect. Identity only:
+enough to decide, and deliberately not a live reference into widget state or a
+copy of the screenshots hanging off it.
+
+```ts
+interface PermissionTarget {
+  /** Id of the comment or of the reply, matching the action. */
+  id: CommentId;
+  /** Display name the record was written under. */
+  author: string;
+  /** Identity it was written under; null when the host declared no user.id. */
+  authorId: string | null;
+  /** Present only on edit:reply and delete:reply. */
+  commentId?: CommentId;
+}
+```
+
+Compare `authorId` against your own session — `author` is a label, and two
+people can share it.
+
+## Change metadata
+
+```ts
+interface ChangeMeta {
+  origin: ChangeOrigin;
+}
+
+interface StatusChangeMeta extends ChangeMeta {
+  from: CommentStatus;
+  to: CommentStatus;
+}
+
+type UpdateMeta = ChangeMeta &
+  (
+    | { field: 'type'; from: CommentType | null; to: CommentType | null }
+    | { field: 'priority'; from: CommentPriority | null; to: CommentPriority | null }
+    | { field: 'tags'; from: string[]; to: string[] }
+  );
+```
+
+See [events](/docs/api/events) for how these reach you.

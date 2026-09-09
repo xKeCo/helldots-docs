@@ -1,0 +1,109 @@
+---
+title: Introducción
+description: Una capa de comentarios lista para usar en aplicaciones web — haz clic donde sea para dejar un comentario anclado a ese elemento, con una captura de pantalla y el entorno registrados por ti.
+icon: BookOpen
+---
+
+HellDots pone una capa de comentarios sobre tu aplicación. Alguien de tu equipo
+hace clic en un botón, en un encabezado, en una tarjeta rota — donde sea —,
+escribe qué está mal con eso, y el comentario queda anclado a ese elemento. Lo
+que recibes de vuelta no es una frase en un hilo de chat; es un registro que ya
+responde las preguntas que habrías tenido que hacer.
+
+```bash
+npm install helldots
+```
+
+```js
+import { createCommentOverlay } from 'helldots';
+
+createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+Dos líneas y aparece una barra de herramientas al pie de la página.
+<kbd>Alt</kbd>+<kbd>C</kbd> activa el modo comentario; haz clic para colocar un
+comentario, o arrastra para seleccionar una región y adjuntar un recorte de ella.
+
+<Callout title="Lo estás viendo">
+  Este sitio de documentación usa HellDots sobre sí mismo. La barra al pie de
+  esta página es real — deja un comentario en cualquier punto de esta
+  documentación y seguirá aquí cuando vuelvas. Mira el
+  [Playground](/es/docs/playground).
+</Callout>
+
+## Qué lleva un comentario
+
+Un comentario nunca es solo su texto. Cada uno registra:
+
+<Cards>
+  <Card title="Una captura de pantalla" description="La página tal como la vio quien comenta — JPEG a media escala, con la propia interfaz del widget excluida. Si arrastras una región, además obtienes un recorte PNG a resolución completa de exactamente lo que seleccionaste." />
+  <Card title="El entorno" description="URL, viewport, resolución de pantalla, densidad de píxeles, navegador, sistema operativo e idioma. Un bug reportado a 390×844 en iOS Safari lo dice solo, sin que nadie tenga que preguntarlo." />
+  <Card title="Dónde estaba" description="Un selector CSS, una ruta del DOM y una huella estructural del elemento — lo suficiente para volver a encontrarlo después de que la página cambie." />
+  <Card title="Quién y cuándo" description="La identidad que declaró tu aplicación, más un registro de auditoría de solo anexado con cada edición, cambio de estado y reclasificación." />
+</Cards>
+
+## Comentarios que sobreviven a la página
+
+El problema interesante en una capa como esta no es dibujar un punto. Es que la
+página debajo del punto no deja de cambiar.
+
+HellDots guarda tres cosas por ancla — un selector único en la medida de lo
+posible, el selector del elemento exacto donde se hizo clic, y una huella del
+elemento (etiqueta, un fragmento de su texto, sus atributos estables, su
+posición entre hermanos). En la siguiente carga resuelve el comentario contra el
+nuevo DOM. Si el elemento se movió o se reconstruyó, el comentario se vuelve a
+anclar a él. Si de verdad desapareció, el comentario se marca como `orphaned` y
+se muestra en la bandeja en lugar de descartarse en silencio.
+
+Los tres estados en los que puede estar un ancla:
+
+| Estado     | Significado                                                                |
+| ---------- | -------------------------------------------------------------------------- |
+| `anchored` | El elemento se encontró en esta página; el marcador está sobre él          |
+| `orphaned` | Esta es la página del comentario, pero su elemento ya no existe            |
+| `inactive` | El comentario pertenece a una página distinta de la que estás viendo       |
+
+## Tus datos siguen siendo tuyos
+
+No se envía nada a ninguna parte. No hay backend de HellDots, ni cuenta, ni
+telemetría. Eliges una de dos formas de conservar los comentarios:
+
+<Tabs items={['localStorage', 'Tu propio backend']}>
+  <Tab value="localStorage">
+
+Pon `persistence: "localStorage"` y el widget guarda y restaura todo por sí
+mismo, en el navegador de quien visita. Lo adecuado para un entorno de staging,
+una demo o una ronda de revisión en solitario.
+
+```js
+createCommentOverlay({ persistence: 'localStorage' });
+```
+
+  </Tab>
+  <Tab value="Tu propio backend">
+
+Deja la persistencia desactivada y suscríbete a los cambios. Cada comentario es
+JSON plano — entrega la salida de `serializeComments()` a tu API y devuélvesela
+a `loadComments()` más tarde.
+
+```js
+const overlay = createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+  onReady: async (o) => o.loadComments(await api.get('/comments')),
+});
+```
+
+  </Tab>
+</Tabs>
+
+## Por dónde seguir
+
+<Cards>
+  <Card title="Instalación" href="/es/docs/installation" description="Gestores de paquetes, la dependencia peer, ESM y el build para CDN." />
+  <Card title="Inicio rápido" href="/es/docs/quickstart" description="De un proyecto vacío a una capa de comentarios funcionando." />
+  <Card title="Playground" href="/es/docs/playground" description="Maneja el widget que corre sobre este mismo sitio." />
+  <Card title="Referencia de la API" href="/es/docs/api/options" description="Cada opción, método, evento y tipo." />
+</Cards>

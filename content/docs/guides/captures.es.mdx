@@ -1,0 +1,316 @@
+---
+title: Capturas
+description: Qué es de verdad una captura de HellDots, por qué puede ser lenta, las cuatro palancas sobre su coste, y cómo mantener las imágenes fuera de tu base de datos.
+icon: Camera
+---
+
+Cada comentario nuevo registra una captura del viewport y una instantánea del
+entorno, salvo que lo desactives. Arrastrar una región adjunta además un recorte
+PNG a resolución completa de exactamente lo que se seleccionó, encima de la
+captura automática.
+
+## Una captura no es una foto de la pantalla
+
+Este es el hecho del que se sigue todo lo demás de esta página: **el navegador no
+expone ninguna forma de rasterizar la página pintada desde JavaScript.** No hay
+una API de "dame lo que hay en pantalla".
+
+Así que la captura es un re-renderizado. HellDots clona el DOM, lee el estilo
+calculado de cada elemento, incrusta las imágenes y las fuentes, serializa el
+resultado en un `<foreignObject>` de SVG y rasteriza eso. Dos consecuencias:
+
+- **Todo lo que el re-renderizado no alcance falta en la imagen.** Una hoja de
+  estilos de otro origen, una fuente que no puede leer, un recurso que no
+  responde.
+- **El coste escala con tu DOM, no con tu pantalla.** Una página visualmente
+  simple con doce mil nodos es cara; una página de aspecto recargado con
+  doscientos no lo es.
+
+La propia interfaz del widget queda excluida de la captura, así que la barra de
+herramientas nunca acaba dentro de la imagen.
+
+## Nada espera por ella
+
+Hacer clic o arrastrar coloca el marcador y abre la caja de comentario **de
+inmediato**. El renderizado corre por detrás y las imágenes caen cuando llegan —
+una región arrastrada muestra una ranura de "Capturando…" en la tira de adjuntos
+hasta que llega su recorte, y Enviar la espera si tú llegas primero.
+
+La captura además devuelve el hilo principal al navegador cada 8 ms, así que la
+página sigue pintando y aceptando pulsaciones incluso en un renderizado que dure
+un segundo. Ambos comportamientos están siempre activos; no hay nada que
+configurar, y entre los dos una captura lenta es una molestia de fondo en lugar
+de un bloqueo.
+
+## Las palancas
+
+Cuatro opciones cambian lo que cuesta una captura. Ninguna está activa por
+defecto, y cada una intercambia algo concreto.
+
+<TypeTable
+  type={{
+    fastCapture: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Leer una lista curada de propiedades de estilo en lugar de las ~527. Medido en ~2,7× menos en la fase de estilos sobre una página de 12.000 elementos.',
+    },
+    skipIframeContent: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Renderizar los iframes del mismo origen en blanco en lugar de clonar sus documentos. Medido en 82 ms frente a 2.374 ms sobre un frame de 9.000 nodos.',
+    },
+    captureTimeout: {
+      type: 'number',
+      default: '30000',
+      description: 'Milisegundos que un recurso remoto puede retener una captura. El coste real es ~2× este número.',
+    },
+    embedCrossOriginFonts: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Volver a pedir las hojas de estilo ilegibles para que sus fuentes web lleguen a la captura.',
+    },
+  }}
+/>
+
+### fastCapture
+
+Leer los estilos *es* el renderizado. Un navegador expone unas 527 propiedades
+calculadas por elemento y el renderizador las lee todas — en una página con unos
+pocos miles de nodos vivos eso son cientos de miles de lecturas, y en torno al
+**91% del coste total de una captura**.
+
+```js
+createCommentOverlay({ fastCapture: true });
+```
+
+Esto reduce la enumeración a una lista curada de las propiedades que cambian un
+píxel. Medido en ~2,7× menos en esa fase sobre una página de 12.000 elementos, e
+idéntico píxel a píxel a una captura completa en las páginas contra las que se
+verificó.
+
+<Callout type="warn" title="La lista es un contrato de fidelidad">
+  Está desactivada por defecto porque ninguna lista es demostrablemente completa
+  para una página que la librería no ha visto nunca: **una propiedad que no
+  nombra simplemente falta en la imagen.** Actívala para una página pesada, mira
+  una captura antes de confiar en ella, y [abre una
+  incidencia](https://github.com/xKeCo/helldots/issues) si algo sale mal — el
+  arreglo es una entrada más en la lista.
+</Callout>
+
+### skipIframeContent
+
+El coste de un iframe es invisible desde fuera. El renderizador entra en un frame
+del mismo origen y clona su documento entero, así que una página que declara 242
+elementos puede ser una captura de 9.245.
+
+```js
+createCommentOverlay({ skipIframeContent: true });
+```
+
+El propio elemento `<iframe>` **se conserva** — su caja, su borde, el espacio que
+ocupa. Eso importa más de lo que parece: eliminar el elemento en su lugar
+desplazaría todo lo de debajo hacia arriba la altura del frame, mientras el
+recorte se sigue tomando en coordenadas de la página real, dejando el fondo de
+cada captura fuera de registro.
+
+Un frame de otro origen no tiene nada que ganar aquí. El renderizador no puede
+leer dentro de él, así que ya sale en blanco — y, al contrario de lo que se suele
+suponer, tampoco se atasca ni espera por él.
+
+### captureTimeout
+
+Para incrustar las imágenes y fuentes de la página, el renderizador las vuelve a
+pedir, dando a cada una un `AbortController` fijado en 30 segundos. Una URL que
+nunca responde retiene la captura hasta que salta. La captura acaba con éxito
+igualmente — ese recurso se convierte en un marcador transparente — pero primero
+espera.
+
+La espera está **acotada, no multiplicada**: un recurso muerto y diez cuestan lo
+mismo, porque se esperan de forma concurrente. Lo que *no* es, es una vez el
+tiempo de espera. El ajuste gobierna dos esperas en secuencia sobre el mismo
+recurso — primero a que la imagen ya presente en la página termine de cargar, y
+después a la petición que la incrusta — así que el coste real es un ~2×
+consistente. **Los 30 segundos por defecto son, por tanto, cerca de un minuto.**
+
+```js
+createCommentOverlay({ captureTimeout: 5000 }); // ≈ 10 segundos
+```
+
+Se deja en el valor por defecto porque bajarlo cambia una captura lenta por una
+silenciosamente incompleta: un recurso que solo era lento, en lugar de estar
+muerto, se descarta y deja un hueco sin nada que lo indique. Son recursos que tu
+página ya cargó, así que la mayoría vienen de caché al instante y la cola es
+justo la de los grandes o no cacheados, que serían un error descartar.
+
+<Callout type="warn" title="Dos valores que hacen lo contrario de lo que quieres decir">
+  Solo se respeta un número finito y positivo. Los dos valores a los que se
+  recurriría para decir "sin límite" se ignoran: el renderizador lee `0` como *no
+  te rindas nunca*, y `setTimeout` convierte `Infinity` en `0`, lo que aborta
+  todos los recursos de inmediato.
+</Callout>
+
+### Fuentes web y embedCrossOriginFonts
+
+Una fuente cargada mediante un `<link>` de otro origen — Google Fonts y
+compañía — es una de las cosas que el re-renderizado no puede alcanzar. Leer
+`cssRules` sobre una hoja así lanza `SecurityError`, así que su `@font-face`
+nunca llega a la captura y el texto sale en una tipografía de reserva.
+
+Y eso no es solo cosmético. Las métricas de la reserva son distintas, así que los
+glifos se sitúan en posiciones diferentes de las de la pantalla, y **una selección
+arrastrada bien ceñida a unas pocas letras puede volver con las equivocadas**.
+
+Tres salidas, de la más barata a la menos:
+
+<Steps>
+
+<Step>
+
+#### Arréglalo en el origen
+
+Autoaloja la fuente, o añade `crossorigin` al `<link>`. La hoja de estilos pasa a
+ser legible, la captura coincide con la página, y no se pide nada extra en el
+momento de capturar. Esta es la opción a la que recurrir.
+
+</Step>
+
+<Step>
+
+#### Deja que HellDots la vuelva a pedir
+
+```js
+createCommentOverlay({ embedCrossOriginFonts: true });
+```
+
+Las mismas URLs que la página ya cargó, cacheadas por sesión, entregadas al
+renderizador. Desactivado por defecto porque que una capa de comentarios haga
+peticiones a terceros en nombre de tus usuarios debería decidirlo tu equipo.
+
+</Step>
+
+<Step>
+
+#### Déjalo estar
+
+Las capturas de una página así seguirán desalineadas en lo que respecta al texto.
+Todo lo demás en ellas es correcto.
+
+</Step>
+
+</Steps>
+
+## Páginas muy largas
+
+Los navegadores limitan el tamaño de un canvas — 65.535 píxeles en una dimensión
+en Chromium, menos en Firefox, y un límite de *área* aparte y bastante más bajo en
+Safari móvil. Una página que pase ese límite no se puede renderizar a escala
+completa.
+
+HellDots ajusta la escala a lo que el navegador vaya a pintar de verdad, y
+comprueba que el resultado contiene píxeles antes de usarlo. Nada por debajo del
+límite cambia. Por encima, la captura se ablanda en proporción: una página de
+68.000px se renderiza a 0,96, una de 140.000px a 0,47. Si incluso el intento más
+pequeño vuelve vacío, la captura falla por `onError` en lugar de adjuntar una
+imagen en blanco.
+
+## Desactivar las capturas
+
+```js
+createCommentOverlay({ autoScreenshot: false });
+```
+
+Sin captura del viewport, sin instantánea del entorno. El renderizado cuesta un
+momento en cada comentario y hay aplicaciones que prefieren no pagarlo — una
+página tras autenticación cuyas capturas serían un riesgo es otra buena razón.
+
+Arrastrar una región sigue adjuntando su recorte: ese sí se pidió.
+
+## Cambiar imágenes por URLs
+
+Cada imagen se guarda como una data URL en base64 dentro del registro — unos
+33 KB solo para la captura automática. `transformScreenshot` es donde la
+reemplazas por algo tuyo.
+
+```js
+createCommentOverlay({
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url; // se guarda en lugar de la data URL
+  },
+});
+```
+
+Se ejecuta para **cada imagen que el widget adquiere**: la captura automática
+(`kind: "context"`), una región recortada al arrastrar, y cualquier cosa adjunta
+desde el selector de archivos en un comentario o en una respuesta
+(`kind: "attachment"`). Los dos tipos existen para que la desechable y la
+deliberada puedan ir a cubos distintos con retenciones distintas.
+
+<Callout type="warn" title="Una URL que devuelves es una subida, no un registro">
+  Se ejecuta en dos momentos distintos y `kind` no los distingue. Todo lo de un
+  *comentario* se transforma al guardarse el comentario; un adjunto de una
+  *respuesta* se transforma al elegir el archivo, porque `addReply()` es síncrono
+  y no puede esperar tu subida.
+
+  Así que un adjunto de respuesta puede subirse y no referenciarse nunca — la
+  persona cierra el popover sin enviar — y un comentario puede hacer lo mismo en
+  una ventana más estrecha, si se descarta mientras su subida está en vuelo.
+  **Barre los blobs sin referencias.**
+</Callout>
+
+Es **a prueba de fallos hacia abierto**. Si tu subida se rechaza, lanza, o
+resuelve a algo que no sea una cadena no vacía, se conserva la data URL original
+y recibes `onError(error, "transform")`. Recibir un registro grande es mejor que
+perder el comentario de alguien.
+
+No se llama para los registros que pasas a `loadComments()`, ni para las capturas
+que entregas tú a `addReply()` — en ambos casos las cadenas ya son tuyas.
+
+## Qué más se captura
+
+Junto con la imagen, cada comentario lleva una instantánea de `context`:
+
+```json
+{
+  "version": 1,
+  "url": "https://example.com/pricing",
+  "viewport": { "width": 390, "height": 844 },
+  "screen": { "width": 390, "height": 844 },
+  "devicePixelRatio": 3,
+  "userAgent": "Mozilla/5.0 (iPhone; …)",
+  "browser": { "name": "Safari", "version": "17.2" },
+  "os": { "name": "iOS", "version": "17.2" },
+  "language": "es-CO"
+}
+```
+
+El user agent en crudo siempre se guarda, incluso cuando falla el análisis del
+navegador y el sistema operativo — así, un dispositivo que nadie anticipó deja
+igualmente algo con lo que trabajar.
+
+## Entregar un comentario a un agente de programación
+
+Cada comentario tiene un botón de **copiar** que pone en el portapapeles un
+bloque de contexto en texto plano, pensado para pegarlo en un asistente de
+programación con IA:
+
+```text
+Page: /pricing
+Viewport: 1440x900
+Anchor state: anchored
+Status: open
+Selector: #plans > div.card:nth-child(2) > button
+Element: <button class="cta" data-plan="pro">
+DOM path: body > main.layout > section#plans > div.card > button.cta
+Nearby text: "Upgrade to Pro"
+Comment by Ana (2026-07-29T10:14:00.000Z):
+"This button does nothing on mobile"
+Type: bug
+Priority: high
+Tags: checkout, ios
+URL: https://example.com/pricing
+Screen: 390x844
+Browser: Safari 17.2
+OS: iOS 17.2
+```

@@ -1,0 +1,161 @@
+---
+title: Triaje
+description: Estado, tipo, prioridad y etiquetas; las seis reacciones; y el registro de auditoría de solo anexado que lleva cada comentario.
+icon: ListChecks
+---
+
+Un comentario empieza siendo texto sobre un elemento. El triaje es lo que
+convierte un montón de esos en algo con lo que un equipo puede avanzar.
+
+## Los cuatro campos
+
+| Campo      | Valores                                                    | Empieza en |
+| ---------- | ----------------------------------------------------------- | ---------- |
+| `status`   | `open`, `in_progress`, `in_review`, `resolved`             | `open`     |
+| `type`     | `bug`, `suggestion`, `question`, `improvement`, o `null`   | `null`     |
+| `priority` | `high`, `medium`, `low`, o `null`                          | `null`     |
+| `tags`     | cualquier cadena — recortada, en minúsculas, sin duplicados | `[]`       |
+
+Tres de ellos empiezan neutros: quien reporta puede clasificar, o no. `null` aquí
+es un valor, no una ausencia — significa *deliberadamente sin clasificar*, y es
+distinto de un campo que nadie ha mirado.
+
+**El estado es el que nunca es neutro.** Cada comentario empieza en `open` y se
+mueve por el ciclo de vida en cualquier orden — no hay secuencia obligatoria.
+`open` es el único estado pintado en un blanco roto sin saturar, así que los tres
+estados a los que alguien movió un comentario a propósito son los que destacan en
+una lista.
+
+```js
+overlay.setCommentType(id, 'bug');
+overlay.setCommentPriority(id, 'high');
+overlay.setCommentTags(id, ['checkout', 'ios']);
+overlay.setCommentStatus(id, 'resolved'); // sella resolvedAt
+```
+
+Pasar `null` a `setCommentType` o `setCommentPriority` devuelve el campo a su
+estado neutro. Reabrir un comentario resuelto limpia `resolvedAt`.
+
+Cada setter devuelve `false` ante un id desconocido o un valor inválido, y no
+cambia nada cuando lo hace. Volver a aplicar un valor que el comentario ya tiene
+no hace nada: ni evento, ni escritura.
+
+### Etiquetas
+
+`setCommentTags` normaliza lo que le des — recortado, en minúsculas, sin
+duplicados:
+
+```js
+overlay.setCommentTags(id, ['  Checkout ', 'iOS', 'checkout']);
+// se guarda como ["checkout", "ios"]
+```
+
+Los valores cargados con `loadComments()` se aceptan tal cual y **no** se vuelven
+a normalizar al leerse, así que un corpus escrito por tu propio backend conserva
+la forma que le diste.
+
+### Filtrar
+
+La bandeja filtra por los cuatro, combinados con la página. Los comentarios
+resueltos muestran cuánto tardaron, medido desde la creación hasta la resolución.
+
+## Reacciones
+
+Los comentarios y las respuestas admiten una de seis reacciones — 👍 👎 ❤️ 🎉 👀 🚀 —
+para que un equipo pueda estar de acuerdo, marcar "estoy atento a esto" o señalar
+algo como entregado sin añadir una respuesta.
+
+El conjunto es fijo. Un selector con búsqueda necesitaría un dataset de emoji más
+grande que el widget entero.
+
+```js
+overlay.toggleCommentReaction(id, '👍');
+overlay.toggleReplyReaction(commentId, replyId, '🎉');
+```
+
+Ambos alternan: reaccionar de nuevo con el mismo emoji lo quita. Cualquier cosa
+fuera de las seis devuelve `false`, y se descarta al cargar.
+
+Una reacción se guarda contra `user.id` si lo pasas, y contra `user.name` si no —
+una razón más para
+[pasar un id](/es/docs/guides/identity#pasa-un-id-si-dos-personas-pueden-compartir-nombre).
+Van en la salida de `serializeComments()` como un mapa `{ emoji: actorKey[] }`, o
+`null` cuando nadie ha reaccionado, así que un corpus intacto no lleva carga
+extra.
+
+Las píldoras muestran cuentas, nunca quién reaccionó: las claves guardadas son
+tus ids, y se quedan fuera de la interfaz.
+
+## El registro de auditoría
+
+Cada comentario lleva un registro de solo anexado con lo que le ha pasado — quién
+lo creó, editó su texto, movió su estado o cambió su clasificación, y cuándo.
+Aparece como un desplegable plegado `Historial (n)` en el detalle de la bandeja.
+
+```js
+overlay.serializeComments()[0].history;
+// [
+//   { type: "created",    at: "…", actor: { id: "u_42", name: "Ana Pérez" } },
+//   { type: "status",     at: "…", actor: {…}, from: "open", to: "resolved" },
+//   { type: "classified", at: "…", actor: {…}, field: "type", from: null, to: "bug" },
+// ]
+```
+
+Cuatro tipos de evento, y ninguno más:
+
+| Tipo         | Se escribe cuando                            | Campos extra                                    |
+| ------------ | -------------------------------------------- | ----------------------------------------------- |
+| `created`    | Se guarda el comentario                      | —                                               |
+| `edited`     | Se reescribe su texto                        | —                                               |
+| `status`     | Se mueve por el ciclo de vida                | `from`, `to`                                    |
+| `classified` | Cambian tipo, prioridad o etiquetas          | `field`, y `from`/`to` para los dos primeros    |
+
+**Las respuestas y las reacciones a propósito no están ahí.** Una respuesta ya
+lleva su propio autor y marca de tiempo y es visible en el hilo; las reacciones
+son señal de alta frecuencia sin valor de auditoría. Ese límite es lo que
+mantiene el registro en tres a cinco entradas por comentario — el historial de
+cien comentarios cuesta más o menos lo que dos capturas automáticas.
+
+Para un cambio de etiquetas no hay `from`/`to`: es una lista, no una transición
+de dos valores.
+
+### El tiempo de resolución se deriva de él
+
+En lugar de guardarse aparte. Así que un comentario que fue resuelto, reabierto y
+resuelto de nuevo informa de la duración de la resolución **vigente**, y las
+anteriores se listan bajo *Resoluciones anteriores* en el mismo desplegable.
+
+### Dos cosas que saber antes de confiar en él
+
+<Callout type="warn" title="Es atributivo, no probatorio">
+  El registro anota el `user` que tu aplicación declaró en el momento de la
+  acción. Dice lo que tu aplicación afirmó sobre quién actuó — no un hecho
+  verificado. Verifícalo en tu propio backend si necesitas la afirmación más
+  fuerte; `onChange` lleva cada mutación hasta allí.
+</Callout>
+
+<Callout type="warn" title="Las marcas de tiempo vienen del reloj del cliente que actúa">
+  Fusiona corpus escritos en máquinas cuyos relojes discrepan y una entrada puede
+  ser anterior al comentario al que pertenece. Las duraciones se recortan a cero
+  en lugar de mostrarse negativas.
+</Callout>
+
+Un corpus escrito antes de que el registro existiera carga sin cambios con
+`history: null`, y sus comentarios no muestran ningún desplegable. Aditivo — nada
+necesita migración.
+
+## Reaccionar al triaje desde tu aplicación
+
+```js
+createCommentOverlay({
+  onCommentStatusChanged: (comment, { from, to }) => {
+    if (from === 'resolved') notify(`${comment.author} reabrió esto`);
+  },
+  onCommentUpdated: (comment, meta) => {
+    if (meta.field === 'priority' && meta.to === 'high') page(comment);
+  },
+});
+```
+
+`meta.field` estrecha `meta.from` y `meta.to` por ti en TypeScript — mira
+[eventos](/es/docs/api/events#oncommentupdated).

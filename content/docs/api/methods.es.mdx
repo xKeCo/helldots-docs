@@ -1,0 +1,269 @@
+---
+title: Métodos
+description: Todo lo que hay en una instancia de CommentOverlay — qué devuelve cada uno, y cuándo devuelve false.
+icon: Braces
+---
+
+```ts
+import type { CommentOverlay } from 'helldots';
+```
+
+## Propiedades
+
+<TypeTable
+  type={{
+    comments: {
+      type: 'Comment[]',
+      description: 'Los comentarios vivos que el widget tiene, con campos de solo tiempo de ejecución — `container` (el elemento resuelto), `anchorState`, `hidden`, `target`. Para una copia segura en JSON, usa serializeComments().',
+    },
+    commentMode: {
+      type: 'boolean',
+      description: 'Si el selector de elementos está armado ahora mismo.',
+    },
+  }}
+/>
+
+## Modo
+
+### toggleCommentMode
+
+```ts
+overlay.toggleCommentMode(): void
+```
+
+Acciona el modo comentario. Idéntico al botón de la barra y al atajo de teclado,
+y emite `onCommentModeChanged` igual que ellos.
+
+## Comentarios
+
+### editComment
+
+```ts
+overlay.editComment(id: CommentId, text: string): boolean
+```
+
+Reescribe el texto de un comentario y sella `editedAt`. Devuelve `false` — sin
+cambiar nada — cuando el id es desconocido, el texto está vacío, o el texto es lo
+que el comentario ya decía.
+
+### deleteComment
+
+```ts
+overlay.deleteComment(id: CommentId): boolean
+```
+
+Elimina el comentario y su marcador. Tu propia llamada nunca la rechaza `can`.
+
+### clearComments
+
+```ts
+overlay.clearComments(): void
+```
+
+Elimina todos los comentarios de una vez — marcadores, memoria y las entradas
+guardadas en modo `localStorage`. **No dispara callbacks por comentario:** es un
+reinicio en bloque para reconciliar contra un backend antes de `loadComments`, y
+devolverle cien borrados a un servidor es justo lo que no quieres.
+
+### commentLink
+
+```ts
+overlay.commentLink(id: CommentId): string | null
+```
+
+La URL compartible de un comentario — la página actual más el parámetro de
+consulta [`linkParam`](/es/docs/api/options#navegación-y-enlaces). `null` cuando
+el id es desconocido.
+
+## Respuestas
+
+### addReply
+
+```ts
+overlay.addReply(
+  comment: Comment | CommentId,
+  text: string,
+  screenshots?: string[],
+): CommentReply | null
+```
+
+Acepta el comentario vivo o su id. `screenshots` son data URLs adjuntas a la
+respuesta — **no** pasan por `transformScreenshot`, porque las cadenas que
+entregas tú ya son tuyas. Devuelve `null` cuando un id no resuelve.
+
+<Callout title="Es síncrono">
+  Por eso un adjunto elegido en el compositor de respuestas se transforma al
+  elegirlo y no al enviarlo — `addReply` no puede esperar tu subida. Mira
+  [transformScreenshot](/es/docs/guides/captures#cambiar-imágenes-por-urls).
+</Callout>
+
+### editReply
+
+```ts
+overlay.editReply(commentId: CommentId, replyId: CommentId, text: string): boolean
+```
+
+El mismo contrato que `editComment`, un nivel más abajo.
+
+### deleteReply
+
+```ts
+overlay.deleteReply(commentId: CommentId, replyId: CommentId): boolean
+```
+
+El id de una respuesta solo es único dentro de su hilo, y por eso hacen falta los
+dos ids.
+
+## Triaje
+
+Cada setter devuelve `false` ante un id desconocido o un valor inválido, y no
+cambia nada cuando lo hace. Volver a aplicar un valor que el comentario ya tiene
+no hace nada — ni evento, ni escritura.
+
+```ts
+overlay.setCommentStatus(id, status: CommentStatus): boolean
+overlay.setCommentType(id, type: CommentType | null): boolean
+overlay.setCommentPriority(id, priority: CommentPriority | null): boolean
+overlay.setCommentTags(id, tags: string[]): boolean
+```
+
+`setCommentStatus(id, "resolved")` sella `resolvedAt`; salir de `resolved` lo
+limpia. `setCommentTags` normaliza lo que le des — recortado, en minúsculas, sin
+duplicados. Pasar `null` al setter de tipo o de prioridad devuelve el campo a su
+estado neutro.
+
+### Reacciones
+
+```ts
+overlay.toggleCommentReaction(id: CommentId, emoji: string): boolean
+overlay.toggleReplyReaction(commentId, replyId, emoji: string): boolean
+```
+
+Ambos alternan: si está, la reacción se quita; si no está, se añade. El actor es
+`user.id ?? user.name`. Devuelven `false` cuando el id o el emoji son
+desconocidos — el conjunto es fijo: 👍 👎 ❤️ 🎉 👀 🚀.
+
+## Identidad y permisos
+
+### setUser
+
+```ts
+overlay.setUser(user: { name: string; id?: string } | null): boolean
+```
+
+Reemplaza la identidad a la que se atribuyen los comentarios, respuestas y
+reacciones nuevos. Todo lo ya registrado conserva el autor con el que se
+escribió. `null` vuelve al autor anónimo.
+
+Devuelve `false`, sin cambiar nada, ante cualquier cosa que no sea `null` ni un
+objeto con un `name` no vacío.
+
+### can
+
+```ts
+overlay.can(action: PermissionAction, target: PermissionTarget): boolean
+```
+
+El mismo veredicto con el que se dibujan los menús del propio widget, expuesto
+para que un botón de borrar en tu interfaz pueda consultar la única regla en
+lugar de mantener una copia en sincronía.
+
+```js
+overlay.can('delete:comment', { id, author, authorId });
+```
+
+## Serialización
+
+### serializeComments
+
+```ts
+overlay.serializeComments(): SerializedComment[]
+```
+
+Una instantánea segura en JSON — sin referencias vivas a elementos, sin campos de
+solo tiempo de ejecución. Sellada con `schemaVersion: 1`. Entrégala directa a tu
+API.
+
+### loadComments
+
+```ts
+overlay.loadComments(data: SerializedComment[]): {
+  anchored: number;
+  orphaned: number;
+  inactive: number;
+}
+```
+
+Reemplaza por id. **Nunca elimina**: un comentario borrado en tu servidor sigue en
+pantalla hasta que hagas `clearComments()` primero.
+
+Los registros mal formados se descartan y se reportan por
+[`onError(error, "load")`](/es/docs/api/events#onerror) en lugar de lanzar.
+
+Si se llama antes de que el widget haya montado — posible cuando una petición se
+resuelve mientras el documento todavía se está parseando — los datos se retienen y
+se aplican al montar, y las cuentas vuelven a cero porque todavía no se ha
+resuelto nada. Carga desde `onReady` cuando las cuentas importen.
+
+### notifyNavigation
+
+```ts
+overlay.notifyNavigation(): {
+  anchored: number;
+  orphaned: number;
+  inactive: number;
+}
+```
+
+Re-sincroniza el widget tras una navegación del lado del cliente: reclasifica
+cada comentario contra la nueva ruta, vuelve a resolver las anclas contra el nuevo
+DOM, reconstruye los marcadores y mueve la bandeja a la nueva página.
+
+Es también la primitiva de "vuelve a anclar ahora" para re-renderizados en la
+misma ruta — llámalo después de que tu aplicación haya reemplazado el DOM de una
+ruta.
+
+## Métricas y exportación
+
+### getMetrics
+
+```ts
+overlay.getMetrics(): CommentMetrics
+```
+
+Cifras agregadas sobre **todos** los comentarios que el widget tiene. Sin filtrar
+a propósito: el panel dentro de la bandeja mide lo que ese panel esté mostrando,
+pero tu aplicación no sabe nada de esos filtros.
+
+### exportCommentsCsv / exportMetricsCsv
+
+```ts
+overlay.exportCommentsCsv(comments?: SerializedComment[]): string
+overlay.exportMetricsCsv(comments?: SerializedComment[]): string
+```
+
+Descargan el archivo **y devuelven el mismo texto**, así que quien quisiera hacer
+POST de esas filas a algún sitio no tiene que construirlas otra vez. Por defecto
+usan todos los comentarios. RFC 4180 con BOM UTF-8; las capturas se quedan fuera.
+
+### printMetricsReport
+
+```ts
+overlay.printMetricsReport(comments?: SerializedComment[], scope?: string): void
+```
+
+Abre el diálogo de impresión del navegador sobre un informe de las cifras, que es
+donde vive "guardar como PDF". El informe se construye en su propio documento, así
+que lo que se imprime es el informe y no la página anfitriona. `scope` es una
+etiqueta opcional impresa en él.
+
+## Desmontaje
+
+### cleanup
+
+```ts
+overlay.cleanup(): void
+```
+
+Elimina el widget por completo — marcadores, barra, listeners, shadow root.
+Llámalo desde la limpieza de un efecto de React, y al cerrar sesión.

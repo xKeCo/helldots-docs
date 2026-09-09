@@ -1,0 +1,136 @@
+---
+title: Metrics & exports
+description: The dashboard inside the inbox, the unfiltered figures behind it, and three ways to get them out.
+icon: ChartColumn
+---
+
+The inbox header carries a **Metrics** button. It swaps the list for a
+dashboard: totals, how many were resolved and how many came back, average and
+median resolution time, bars per status, type and priority, and a daily
+distribution. Each bar carries the colour its own picker uses, so a chip and its
+bar read as the same thing.
+
+## The dashboard measures what you are looking at
+
+It reflects **the panel's current filters** — the filter summary sits right above
+the figures, so they answer "what am I looking at" rather than "what exists".
+
+For the unfiltered aggregate, ask the overlay:
+
+```js
+overlay.getMetrics();
+// {
+//   total: 42,
+//   byStatus:   { open: 12, in_progress: 4, in_review: 2, resolved: 24 },
+//   byType:     { bug: 18, suggestion: 9, question: 3, improvement: 4, unset: 8 },
+//   byPriority: { high: 7, medium: 15, low: 6, unset: 14 },
+//   overTime:   [{ date: "2026-08-18", count: 5 }, …],
+//   resolution: {
+//     resolvedCount: 24,
+//     reopenedCount: 3,
+//     averageMs: 9000000,
+//     medianMs: 5400000,
+//   },
+// }
+```
+
+`getMetrics()` is unfiltered on purpose: the panel's filters are a UI state your
+app has no notion of.
+
+### Reading the shape
+
+- **Every bucket is present even when empty**, so you can index it without
+  guarding. An absent key and a zero would otherwise be indistinguishable.
+- **`unset`** holds the comments left deliberately unclassified or
+  unprioritised — it is a bucket, not a gap.
+- **`overTime` lists only the days that saw activity.** Filling the gaps would
+  put a year of empty buckets between two comments twelve months apart. If you
+  need a continuous axis, densify it yourself.
+- **`averageMs` and `medianMs` are `null` when nothing is resolved**, rather than
+  zero.
+- **`reopenedCount`** is the comments that were resolved, reopened and resolved
+  again — the number that says whether "resolved" means anything on your team.
+
+```js
+const { resolution } = overlay.getMetrics();
+const hours = resolution.medianMs != null ? resolution.medianMs / 3_600_000 : null;
+```
+
+## Exporting
+
+Three buttons at the foot of the dashboard, and the same three as methods:
+
+```js
+overlay.exportCommentsCsv(); // helldots-comments.csv — one row per comment
+overlay.exportMetricsCsv(); // helldots-metrics.csv  — section, key, value
+overlay.printMetricsReport(); // the browser's print dialog → Save as PDF
+```
+
+Each takes an optional array of comments; they default to every comment the
+widget holds.
+
+```js
+const resolved = overlay.serializeComments().filter((c) => c.status === 'resolved');
+overlay.exportCommentsCsv(resolved);
+```
+
+### The CSVs return what they download
+
+Both CSV methods hand back the same text they put in the download, so a host
+that wanted to send those rows somewhere instead of handing the user a file does
+not have to build them a second time:
+
+```js
+await api.post('/reports/comments', { csv: overlay.exportCommentsCsv() });
+```
+
+A browser download is a dead end; this is the way out of it.
+
+### What the files look like
+
+`exportCommentsCsv` is one row per comment. `exportMetricsCsv` is **long
+format** — `section, key, value` — so the column count does not change with the
+corpus, and the file stays joinable no matter what is in it.
+
+Both are RFC 4180 with a UTF-8 BOM, so Excel opens them without turning every
+accent into mojibake, and a value that would otherwise be evaluated as a formula
+is neutralised on the way out.
+
+Headers are the **internal field names**, not translated labels: the file is an
+interchange format, and a column whose spelling follows the widget's locale
+cannot be joined against anything.
+
+Screenshots stay out. A 33 KB base64 string in a spreadsheet cell is not data.
+
+### The PDF is the browser's
+
+```js
+overlay.printMetricsReport(comments, scope);
+```
+
+HellDots builds the report in its own document and asks *that* document to
+print, so what prints is the report rather than the page behind it. "Save as
+PDF" in the dialog gives you a real one at no cost in bundle size — the lightest
+PDF library measured 133 KB gzip against a 50 KB budget.
+
+`scope` is an optional label printed on the report, for saying what the figures
+cover:
+
+```js
+overlay.printMetricsReport(thisSprint, 'Sprint 14 — checkout');
+```
+
+## Building your own dashboard
+
+Nothing here is privileged. `serializeComments()` gives you every record, and
+`getMetrics()` is a convenience over the same data:
+
+```js
+const comments = overlay.serializeComments();
+
+const byTag = comments
+  .flatMap((c) => c.tags.map((tag) => [tag, c]))
+  .reduce((acc, [tag]) => ({ ...acc, [tag]: (acc[tag] ?? 0) + 1 }), {});
+```
+
+Re-read them whenever the widget emits — `onChange` fires for every mutation.

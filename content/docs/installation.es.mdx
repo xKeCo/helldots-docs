@@ -1,0 +1,137 @@
+---
+title: Instalación
+description: Instala el paquete, su única dependencia peer, y ten claro qué obtienes — ESM, tipos y un build en CDN para páginas sin bundler.
+icon: Package
+---
+
+<Tabs items={['npm', 'pnpm', 'yarn', 'bun']}>
+
+<Tab value="npm">
+
+```bash
+npm install helldots
+```
+
+</Tab>
+
+<Tab value="pnpm">
+
+```bash
+pnpm add helldots
+```
+
+</Tab>
+
+<Tab value="yarn">
+
+```bash
+yarn add helldots modern-screenshot
+```
+
+</Tab>
+
+<Tab value="bun">
+
+```bash
+bun add helldots
+```
+
+</Tab>
+
+</Tabs>
+
+## La dependencia peer
+
+El renderizador de capturas,
+[`modern-screenshot`](https://www.npmjs.com/package/modern-screenshot), es una
+dependencia peer en lugar de una empaquetada — así tu aplicación resuelve una
+sola copia, y un proyecto que ya la use no envía dos.
+
+npm 7+, pnpm 8+ y bun instalan las dependencias peer automáticamente. **En Yarn
+tienes que añadirla tú:**
+
+```bash
+yarn add helldots modern-screenshot
+```
+
+HellDots la carga con un `import()` perezoso en la primera captura, no al
+arrancar, y memoiza el resultado. De ahí se siguen dos cosas:
+
+- **El renderizador no está en tu bundle inicial.** Es un chunk aparte, y quien
+  nunca deje un comentario nunca lo descarga.
+- **Que falte se nota en la primera captura, no al montar.** El comentario se
+  guarda igualmente — sin captura de pantalla — y el fallo llega a
+  [`onError(error, "capture")`](/es/docs/api/events#onerror). Normalmente tu
+  bundler se habrá negado a resolver el import mucho antes, que es el error que
+  de verdad quieres.
+
+<Callout type="warn" title="Quitarla no es la forma de desactivar las capturas">
+  Para desactivar las capturas, conserva la dependencia y pon
+  [`autoScreenshot: false`](/es/docs/guides/captures#desactivar-las-capturas).
+  Quitar el paquete no es lo mismo: deja cada captura fallando en tiempo de
+  ejecución en lugar de no intentarse nunca.
+</Callout>
+
+## Solo ESM
+
+El paquete publica módulos ES y nada más. `import` funciona en todo lo que
+importa — bundlers, Vite, Next.js, Node ≥ 18 y un `<script type="module">`
+nativo. No hay build CommonJS, así que `require("helldots")` no funcionará.
+
+```js
+import { createCommentOverlay } from 'helldots';
+```
+
+El campo `engines` del paquete exige Node 18 o superior.
+
+## Sin bundler
+
+En la CDN hay un build UMD autocontenido, con el renderizador ya dentro. Define
+una variable global `HellDots`:
+
+```html
+<script src="https://unpkg.com/helldots"></script>
+<script>
+  HellDots.createCommentOverlay({ user: { name: 'Ana' } });
+</script>
+```
+
+Fija la versión en cualquier sitio donde prefieras que nada cambie por su
+cuenta:
+
+```html
+<script src="https://unpkg.com/helldots@0.12.0"></script>
+```
+
+jsDelivr sirve el mismo archivo en `https://cdn.jsdelivr.net/npm/helldots`.
+
+## TypeScript
+
+Las definiciones vienen con el paquete. No hay ningún `@types/helldots` que
+instalar, ni nada que configurar:
+
+```ts
+import {
+  createCommentOverlay,
+  type CommentOverlayOptions,
+  type SerializedComment,
+} from 'helldots';
+```
+
+Cada opción, payload de callback y forma de registro está tipada — mira la
+[referencia de tipos](/es/docs/api/types).
+
+## Compatibilidad de navegadores
+
+Navegadores modernos con actualización continua. El widget se renderiza dentro
+de un Shadow DOM, así que el CSS de tu página no puede filtrarse hacia dentro ni
+sus estilos hacia fuera — no hay reset contra el que pelear, ni guerra de
+especificidad, ni prefijo de clases que configurar.
+
+## Importar en el servidor
+
+Es seguro. Nada del módulo toca el DOM al importarse, así que un `import` en lo
+alto de un componente de servidor o de un script de Node no lanza ningún error.
+Lo que no debes hacer es *llamar* a `createCommentOverlay` fuera del navegador —
+mira
+[aplicaciones renderizadas en el servidor](/es/docs/guides/frameworks#aplicaciones-renderizadas-en-el-servidor).

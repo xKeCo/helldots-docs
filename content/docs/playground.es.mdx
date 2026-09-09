@@ -1,0 +1,250 @@
+---
+title: Playground
+description: HellDots corre sobre este sitio. Deja un comentario en esta documentación y maneja el mismo widget a través de su API pública.
+icon: MousePointerClick
+---
+
+Todo en esta página es la librería real. La barra de herramientas al pie de tu
+pantalla pertenece a un `CommentOverlay` montado en el layout raíz de este
+sitio, con `persistence: "localStorage"` — así que lo que dejes aquí se guarda
+**solo en tu navegador** y seguirá ahí mañana. No se envía nada a ninguna parte;
+no hay ningún servidor al otro lado.
+
+<HellDotsControls />
+
+## Pruébalo
+
+<Steps>
+
+<Step>
+
+### Activa el modo comentario
+
+Pulsa <kbd>Alt</kbd>+<kbd>C</kbd> (<kbd>Opción</kbd>+<kbd>C</kbd> en macOS), haz
+clic en el botón del punto en la barra, o usa el botón de arriba — los tres
+accionan el mismo interruptor.
+
+</Step>
+
+<Step>
+
+### Haz clic en algo
+
+Lo que sea de esta página. Un encabezado, un enlace, un botón de la interfaz de
+prueba de abajo. La caja de comentario se abre de inmediato y la captura se
+renderiza por detrás.
+
+</Step>
+
+<Step>
+
+### Prueba a arrastrar
+
+Arrastra un recuadro alrededor de una región y HellDots adjunta un recorte a
+resolución completa de exactamente lo que seleccionaste, además de la captura
+automática del viewport.
+
+</Step>
+
+<Step>
+
+### Vuelve más tarde
+
+Recarga. Navega a otra página de esta documentación y vuelve. El comentario se
+vuelve a anclar al elemento sobre el que lo dejaste — que es justo el sentido de
+la huella del ancla.
+
+</Step>
+
+</Steps>
+
+## Algo sobre lo que comentar
+
+<DemoSurface />
+
+Deja un comentario en el botón **Pasar a Pro** y luego abre la bandeja y mira el
+detalle: el selector, la ruta del DOM, el texto cercano, el viewport desde el
+que se reportó. Ese bloque es también lo que el botón de **copiar** pone en tu
+portapapeles, con formato para pegarlo en un agente de programación.
+
+## Cómo lo hace este sitio
+
+Sin ganchos privados — la documentación usa la misma API pública que todo lo
+demás. Toda la integración es un componente de cliente en el layout raíz:
+
+```tsx title="components/helldots/provider.tsx"
+'use client';
+
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import type { CommentOverlay } from 'helldots';
+
+export function HellDotsProvider({ children, locale }) {
+  const [overlay, setOverlay] = useState<CommentOverlay | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    let cancelled = false;
+    let instance: CommentOverlay | undefined;
+
+    void import('helldots').then(({ createCommentOverlay }) => {
+      if (cancelled) return;
+
+      instance = createCommentOverlay({
+        user: readIdentity(), // un nombre en localStorage + un id anónimo acuñado
+        locale,
+        persistence: 'localStorage',
+        fastCapture: true,
+        navigate: (page) => router.push(page),
+        autoDetectNavigation: true,
+        onReady: setOverlay,
+        onCommentModeChanged: setCommentMode,
+      });
+    });
+
+    return () => {
+      cancelled = true;
+      instance?.cleanup();
+    };
+  }, [locale]);
+
+  // El enrutado con pushState no dispara popstate — hay que avisar al widget
+  // en cuanto la nueva ruta se ha pintado y sus elementos existen para anclar.
+  useEffect(() => {
+    if (!overlay) return;
+    return onNextPaint(() => overlay.notifyNavigation());
+  }, [overlay, pathname]);
+
+  return children;
+}
+```
+
+Seis decisiones ahí dentro merecen nombre, porque son las que cualquier sitio
+con App Router tiene que tomar:
+
+- **`import()` dentro del efecto.** El paquete se puede importar en el servidor
+  sin problema, pero no hay razón para enviarlo en la primera carga de un sitio
+  de documentación. Esto lo mantiene fuera hasta que la página es interactiva.
+- **`cancelled` + `cleanup()`.** El doble montaje de React en desarrollo ejecuta
+  el efecto dos veces. La bandera impide que el primer import monte una segunda
+  barra después de que su limpieza ya se haya ejecutado.
+- **`navigate: router.push`.** El salto de "ver en su página" desde la bandeja
+  sería si no una recarga completa, que tira por la borda toda la SPA.
+- **`onCommentModeChanged`.** El atajo de teclado nunca llega a React, y el modo
+  se apaga solo tras guardar un comentario — sin esto el botón del panel se
+  desincroniza de la barra.
+- **`locale` en las dependencias.** HellDots toma su idioma al construirse y no
+  expone ningún setter, así que cambiar de idioma reconstruye el widget. No se
+  pierde nada: en modo `localStorage` los comentarios se recargan al volver a
+  montar.
+- **`notifyNavigation()` al cambiar `pathname`.** `autoDetectNavigation` cubre
+  atrás y adelante; el enrutado con pushState no dispara `popstate`, así que el
+  cambio del propio router es lo que dispara el re-anclaje.
+
+Ese último tiene un matiz que vale la pena robar. Lo obvio es programarlo con
+dos `requestAnimationFrame` — el primero cae después de que React haga commit, y
+el segundo después de que el navegador lo maquete. Pero **una pestaña oculta
+nunca pinta, así que su `requestAnimationFrame` no se dispara jamás**, y una
+navegación que ocurra mientras miras otra pestaña dejaría al widget apuntando a
+la página anterior. El maquetado sí se calcula en una pestaña oculta, así que la
+solución es una fecha límite, no una espera más larga:
+
+```ts
+function onNextPaint(run: () => void): () => void {
+  let done = false;
+  let inner = 0;
+
+  const fire = () => {
+    if (done) return;
+    done = true;
+    run();
+  };
+
+  const outer = requestAnimationFrame(() => {
+    inner = requestAnimationFrame(fire);
+  });
+  const timer = window.setTimeout(fire, 150);
+
+  return () => {
+    done = true;
+    cancelAnimationFrame(outer);
+    cancelAnimationFrame(inner);
+    clearTimeout(timer);
+  };
+}
+```
+
+La identidad se acuña como sugiere el README para una aplicación sin cuentas: un
+`crypto.randomUUID()` guardado en `localStorage` bajo una clave que es de este
+sitio. Identifica un perfil de navegador, no a una persona.
+
+```ts
+const KEY = 'helldots-docs:anon-id';
+let id = localStorage.getItem(KEY);
+if (!id) localStorage.setItem(KEY, (id = crypto.randomUUID()));
+```
+
+## El widget habla tu idioma
+
+HellDots trae `en` y `es`, así que este sitio le pasa el idioma de la página que
+lo rodea. En español la barra dice **Comentar**, **Bandeja** y **Ocultar
+comentarios**; cambia de idioma arriba y el widget se reconstruye en el otro.
+
+Cualquier otro código recae en inglés, y un idioma al que le falten claves
+sueltas recae clave por clave — un código desconocido degrada, nunca rompe.
+
+## Los comentarios y el cambio de idioma
+
+Conviene saberlo antes de que te sorprenda: **un comentario no te sigue de un
+idioma a otro.** HellDots asocia cada comentario a `location.pathname`, y las dos
+traducciones de una página son dos URLs — `/docs/guides/captures` y
+`/es/docs/guides/captures`.
+
+Así que un comentario dejado en la página en inglés se lee como `inactive` en la
+española: no se ha perdido, sigue en el corpus, sigue listado en la bandeja —
+simplemente no está anclado a nada de la página que estás viendo. Vuelve al otro
+idioma y vuelve a estar anclado.
+
+Eso es la librería comportándose correctamente, no una carencia. Un sitio que
+quisiera un único hilo compartido por página, sea cual sea el idioma, quitaría el
+prefijo de idioma antes de entregar el registro a su propio almacén — una
+decisión que solo puede tomar quien integra.
+
+## Manéjalo desde tu consola
+
+Este sitio pone la instancia viva en `window` — así que la forma más rápida de
+leer la [referencia de la API](/es/docs/api/methods) es abrir la consola y
+probarla.
+
+```js
+helldots.comments.length;
+helldots.toggleCommentMode();
+
+const [first] = helldots.serializeComments();
+helldots.setCommentType(first.id, 'bug');
+helldots.setCommentPriority(first.id, 'high');
+helldots.toggleCommentReaction(first.id, '🚀');
+
+helldots.getMetrics();
+helldots.commentLink(first.id);
+```
+
+Ese acceso es cosa de este sitio, no de la librería — una línea en `onReady`.
+HellDots no pone nada en `window`.
+
+## Limpiar
+
+Tus comentarios viven bajo una única clave de `localStorage` en este origen.
+**Borrar todo** en el panel de arriba llama a `overlay.clearComments()`, que
+elimina los marcadores, la memoria y la copia guardada de una sola vez. Borrar
+los datos del sitio en tu navegador hace lo mismo de forma más brusca.
+
+<Callout type="warn" title="Esto es una demo, no un cuaderno">
+  Esta documentación se vuelve a publicar. Un corpus en `localStorage` sobrevive
+  a eso sin problema, pero no guardes aquí nada que te importe perder ante un
+  perfil de navegador borrado o un dispositivo distinto — `localStorage` es por
+  origen y por navegador, y no llega más lejos. Para trabajo de verdad,
+  [conecta los callbacks a un
+  backend](/es/docs/guides/persistence#tu-propio-almacén).
+</Callout>

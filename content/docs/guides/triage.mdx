@@ -1,0 +1,159 @@
+---
+title: Triage
+description: Status, type, priority and tags; the six reactions; and the append-only audit trail every comment carries.
+icon: ListChecks
+---
+
+A comment starts as text on an element. Triage is what turns a pile of those
+into something a team can work through.
+
+## The four fields
+
+| Field      | Values                                                    | Starts as |
+| ---------- | --------------------------------------------------------- | --------- |
+| `status`   | `open`, `in_progress`, `in_review`, `resolved`            | `open`    |
+| `type`     | `bug`, `suggestion`, `question`, `improvement`, or `null` | `null`    |
+| `priority` | `high`, `medium`, `low`, or `null`                        | `null`    |
+| `tags`     | any strings — trimmed, lowercased, de-duplicated          | `[]`      |
+
+Three of them start neutral: the person reporting can classify, or not. `null`
+is a value here, not an absence — it means *deliberately unclassified*, and it
+is distinct from a field nobody has looked at.
+
+**Status is the one that is never neutral.** Every comment starts `open` and
+moves through the lifecycle in any order — there is no enforced sequence.
+`open` is the only state painted in an unsaturated off-white, so the three
+states somebody actually moved a comment into are the ones that stand out in a
+list.
+
+```js
+overlay.setCommentType(id, 'bug');
+overlay.setCommentPriority(id, 'high');
+overlay.setCommentTags(id, ['checkout', 'ios']);
+overlay.setCommentStatus(id, 'resolved'); // stamps resolvedAt
+```
+
+Passing `null` to `setCommentType` or `setCommentPriority` returns the field to
+its neutral state. Reopening a resolved comment clears `resolvedAt`.
+
+Each setter returns `false` for an unknown id or an invalid value, and makes no
+change when it does. Re-applying a value a comment already holds is a no-op: no
+event, no write.
+
+### Tags
+
+`setCommentTags` normalises what you give it — trimmed, lowercased,
+de-duplicated:
+
+```js
+overlay.setCommentTags(id, ['  Checkout ', 'iOS', 'checkout']);
+// stored as ["checkout", "ios"]
+```
+
+Values loaded through `loadComments()` are trusted as-is and **not** renormalised
+on read, so a corpus written by your own backend keeps whatever shape you gave
+it.
+
+### Filtering
+
+The inbox filters on all four, combined with the page. Resolved comments show
+how long they took, measured from creation to resolution.
+
+## Reactions
+
+Comments and replies take one of six reactions — 👍 👎 ❤️ 🎉 👀 🚀 — so a team can
+agree, flag "watching this", or mark something shipped without adding a reply.
+
+The set is fixed. A searchable picker would need an emoji dataset larger than
+the whole widget.
+
+```js
+overlay.toggleCommentReaction(id, '👍');
+overlay.toggleReplyReaction(commentId, replyId, '🎉');
+```
+
+Both toggle: reacting again with the same emoji removes it. Anything outside the
+six returns `false`, and is dropped on load.
+
+A reaction is stored against `user.id` when you pass one and against `user.name`
+otherwise — one more reason to
+[pass an id](/docs/guides/identity#pass-an-id-if-two-people-can-share-a-name).
+They ride along in `serializeComments()` as an `{ emoji: actorKey[] }` map, or
+`null` when nobody has reacted, so an untouched corpus carries no extra payload.
+
+The pills show counts, never who reacted: the stored keys are your ids, and they
+stay out of the UI.
+
+## The audit trail
+
+Every comment carries an append-only log of what happened to it — who created
+it, edited its text, moved its status, or changed its classification, and when.
+It shows up as a folded `History (n)` disclosure in the inbox detail.
+
+```js
+overlay.serializeComments()[0].history;
+// [
+//   { type: "created",    at: "…", actor: { id: "u_42", name: "Ana Pérez" } },
+//   { type: "status",     at: "…", actor: {…}, from: "open", to: "resolved" },
+//   { type: "classified", at: "…", actor: {…}, field: "type", from: null, to: "bug" },
+// ]
+```
+
+Four event types, and no more:
+
+| Type         | Written when                                    | Extra fields                       |
+| ------------ | ----------------------------------------------- | ---------------------------------- |
+| `created`    | The comment is saved                            | —                                  |
+| `edited`     | Its text is rewritten                           | —                                  |
+| `status`     | It moves along the lifecycle                    | `from`, `to`                       |
+| `classified` | Type, priority or tags change                   | `field`, and `from`/`to` for the first two |
+
+**Replies and reactions are deliberately not in it.** A reply already carries its
+own author and timestamp and is visible in the thread; reactions are
+high-frequency signal with no audit value. That bound is what keeps the log at
+three to five entries per comment — a hundred comments' worth of history costs
+about what two automatic screenshots cost.
+
+For a tag change there is no `from`/`to`: it is a list, not a two-value
+transition.
+
+### Resolution time is derived from it
+
+Rather than stored beside it. So a comment that was resolved, reopened and
+resolved again reports the duration of the resolution **currently in force**, and
+the superseded ones are listed under *Previous resolutions* in the same
+disclosure.
+
+### Two things to know before relying on it
+
+<Callout type="warn" title="It is attributive, not evidential">
+  The log records the `user` your app declared at the moment of the action. It
+  says what your application asserted about who acted — not a verified fact.
+  Verify on your own backend if you need the stronger claim; `onChange` carries
+  every mutation there.
+</Callout>
+
+<Callout type="warn" title="Timestamps come from the acting client's clock">
+  Merge corpora written on machines whose clocks disagree and an entry can
+  predate the comment it belongs to. Durations are clamped at zero rather than
+  rendered negative.
+</Callout>
+
+A corpus written before the log existed loads unchanged with `history: null`,
+and its comments render no disclosure. Additive — nothing needs migrating.
+
+## Reacting to triage from your app
+
+```js
+createCommentOverlay({
+  onCommentStatusChanged: (comment, { from, to }) => {
+    if (from === 'resolved') notify(`${comment.author} reopened this`);
+  },
+  onCommentUpdated: (comment, meta) => {
+    if (meta.field === 'priority' && meta.to === 'high') page(comment);
+  },
+});
+```
+
+`meta.field` narrows `meta.from` and `meta.to` for you in TypeScript — see
+[events](/docs/api/events#oncommentupdated).

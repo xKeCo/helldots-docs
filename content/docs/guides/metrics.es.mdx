@@ -1,0 +1,140 @@
+---
+title: Métricas y exportación
+description: El panel dentro de la bandeja, las cifras sin filtrar que hay detrás, y tres formas de sacarlas.
+icon: ChartColumn
+---
+
+La cabecera de la bandeja lleva un botón de **Métricas**. Cambia la lista por un
+panel: totales, cuántos se resolvieron y cuántos volvieron, tiempo medio y
+mediano de resolución, barras por estado, tipo y prioridad, y una distribución
+diaria. Cada barra lleva el color que usa su propio selector, así que un chip y
+su barra se leen como la misma cosa.
+
+## El panel mide lo que estás viendo
+
+Refleja **los filtros actuales del panel** — el resumen de filtros se sitúa justo
+encima de las cifras, así que responden a "qué estoy mirando" y no a "qué existe".
+
+Para el agregado sin filtrar, pregúntale a la capa:
+
+```js
+overlay.getMetrics();
+// {
+//   total: 42,
+//   byStatus:   { open: 12, in_progress: 4, in_review: 2, resolved: 24 },
+//   byType:     { bug: 18, suggestion: 9, question: 3, improvement: 4, unset: 8 },
+//   byPriority: { high: 7, medium: 15, low: 6, unset: 14 },
+//   overTime:   [{ date: "2026-08-18", count: 5 }, …],
+//   resolution: {
+//     resolvedCount: 24,
+//     reopenedCount: 3,
+//     averageMs: 9000000,
+//     medianMs: 5400000,
+//   },
+// }
+```
+
+`getMetrics()` no está filtrado a propósito: los filtros del panel son un estado
+de interfaz del que tu aplicación no sabe nada.
+
+### Leer la forma
+
+- **Todos los cubos están presentes aunque estén vacíos**, así que puedes
+  indexarlos sin comprobar. Una clave ausente y un cero serían indistinguibles de
+  otro modo.
+- **`unset`** contiene los comentarios dejados deliberadamente sin clasificar o
+  sin priorizar — es un cubo, no un hueco.
+- **`overTime` lista solo los días con actividad.** Rellenar los huecos pondría
+  un año de cubos vacíos entre dos comentarios separados por doce meses. Si
+  necesitas un eje continuo, densifícalo tú.
+- **`averageMs` y `medianMs` son `null` cuando no hay nada resuelto**, no cero.
+- **`reopenedCount`** son los comentarios que se resolvieron, se reabrieron y se
+  resolvieron de nuevo — el número que dice si "resuelto" significa algo en tu
+  equipo.
+
+```js
+const { resolution } = overlay.getMetrics();
+const horas = resolution.medianMs != null ? resolution.medianMs / 3_600_000 : null;
+```
+
+## Exportar
+
+Tres botones al pie del panel, y los mismos tres como métodos:
+
+```js
+overlay.exportCommentsCsv(); // helldots-comments.csv — una fila por comentario
+overlay.exportMetricsCsv(); // helldots-metrics.csv  — section, key, value
+overlay.printMetricsReport(); // el diálogo de impresión → Guardar como PDF
+```
+
+Cada uno acepta un array opcional de comentarios; por defecto usan todos los que
+el widget tiene.
+
+```js
+const resueltos = overlay.serializeComments().filter((c) => c.status === 'resolved');
+overlay.exportCommentsCsv(resueltos);
+```
+
+### Los CSV devuelven lo que descargan
+
+Ambos métodos CSV devuelven el mismo texto que ponen en la descarga, así que
+quien quisiera enviar esas filas a algún sitio en lugar de entregar un archivo no
+tiene que construirlas otra vez:
+
+```js
+await api.post('/reports/comments', { csv: overlay.exportCommentsCsv() });
+```
+
+Una descarga del navegador es un callejón sin salida; esta es la puerta.
+
+### Cómo son los archivos
+
+`exportCommentsCsv` es una fila por comentario. `exportMetricsCsv` es **formato
+largo** — `section, key, value` — así que el número de columnas no cambia con el
+corpus, y el archivo sigue siendo unible sea cual sea su contenido.
+
+Ambos son RFC 4180 con BOM UTF-8, así que Excel los abre sin convertir cada
+acento en galimatías, y un valor que de otro modo se evaluaría como fórmula se
+neutraliza a la salida.
+
+Las cabeceras son los **nombres internos de los campos**, no etiquetas
+traducidas: el archivo es un formato de intercambio, y una columna cuya grafía
+siga el idioma del widget no se puede unir con nada.
+
+Las capturas se quedan fuera. Una cadena de 33 KB en base64 en una celda de hoja
+de cálculo no es un dato.
+
+### El PDF es el del navegador
+
+```js
+overlay.printMetricsReport(comments, scope);
+```
+
+HellDots construye el informe en su propio documento y le pide a *ese* documento
+que imprima, así que lo que se imprime es el informe y no la página de detrás.
+"Guardar como PDF" en el diálogo te da uno de verdad sin coste en tamaño de
+bundle — la librería de PDF más ligera medida pesaba 133 KB comprimidos frente a
+un presupuesto de 50 KB.
+
+`scope` es una etiqueta opcional impresa en el informe, para decir qué cubren las
+cifras:
+
+```js
+overlay.printMetricsReport(esteSprint, 'Sprint 14 — checkout');
+```
+
+## Construir tu propio panel
+
+Nada de esto es privilegiado. `serializeComments()` te da todos los registros, y
+`getMetrics()` es una comodidad sobre los mismos datos:
+
+```js
+const comments = overlay.serializeComments();
+
+const porEtiqueta = comments
+  .flatMap((c) => c.tags.map((tag) => [tag, c]))
+  .reduce((acc, [tag]) => ({ ...acc, [tag]: (acc[tag] ?? 0) + 1 }), {});
+```
+
+Vuelve a leerlos cada vez que el widget emita — `onChange` se dispara con cada
+mutación.

@@ -1,0 +1,148 @@
+---
+title: Persistence
+description: Keep comments in the browser, in your own store, or reconcile the two — and know what each mode gives up.
+icon: Database
+---
+
+HellDots has no backend. Comments live wherever you decide to put them, and
+there are exactly two mechanisms: the built-in `localStorage` mode, and the
+callbacks.
+
+## localStorage mode
+
+```js
+createCommentOverlay({ persistence: 'localStorage' });
+```
+
+Everything is saved and restored automatically, under a single key shared
+across every page of your app. It is the right choice for a staging
+environment, a design review, a demo — anywhere the comments are for one
+person on one machine and losing them is survivable.
+
+What it costs:
+
+- **Roughly 5 MB, browser-imposed.** That is on the order of a hundred
+  comments with screenshots, since a single automatic capture is ~33 KB of
+  base64.
+- **One browser, one profile.** Nothing crosses to a teammate, another device,
+  or a private window.
+- **One active tab per page.** Writes from another tab are preserved on the
+  next sync, but two tabs editing the same comment resolve last-write-wins, and
+  a comment deleted in one tab can reappear if another tab still holding it in
+  memory saves afterwards.
+
+### When the quota runs out
+
+HellDots does not simply fail. It sheds the **automatic** screenshots of the
+oldest comments and retries, so the comments themselves survive the squeeze.
+Screenshots somebody deliberately attached — a drag-crop, a file from the
+picker — are never discarded.
+
+If the write still cannot be made, you hear about it:
+
+```js
+createCommentOverlay({
+  persistence: 'localStorage',
+  onError: (error, context) => {
+    if (context === 'storage') {
+      // This browser's copy has now diverged from what is on screen.
+      toast.warn('Comments could not be saved locally.');
+    }
+  },
+});
+```
+
+## Your own store
+
+Leave `persistence` at its default of `"none"` and the widget keeps nothing.
+Every mutation reaches you as an event; every comment is plain JSON.
+
+```js
+const overlay = createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+  onReady: async (o) => o.loadComments(await api.get('/comments')),
+});
+```
+
+The round trip is symmetrical by design: `serializeComments()` output goes
+straight into your API, and comes back out into `loadComments()` unchanged.
+
+```js
+await api.put('/comments', overlay.serializeComments());
+```
+
+<Callout title="Load from onReady">
+  `loadComments()` called before the widget has mounted is not lost — the data
+  is held and applied at mount. But the counts it returns are zeroes, because
+  nothing has been resolved against the DOM yet. `onReady` fires once the mount
+  is done and every method is safe to drive.
+</Callout>
+
+### What loadComments returns
+
+```js
+const { anchored, orphaned, inactive } = overlay.loadComments(records);
+```
+
+| Count      | Meaning                                                         |
+| ---------- | --------------------------------------------------------------- |
+| `anchored` | Resolved to an element on the current page                      |
+| `orphaned` | Belongs to this page, but its element is gone                   |
+| `inactive` | Belongs to a different page than the one currently open         |
+
+`orphaned` is the number worth watching. A jump in it after a deploy means a
+refactor moved the elements people had been commenting on.
+
+### Reconciling after remote deletions
+
+`loadComments()` replaces by id, but it never removes: a comment you deleted on
+the server stays on screen because nothing told the widget it was gone. The
+primitive for that is a bulk reset.
+
+```js
+overlay.clearComments(); // markers, memory, and the localStorage copy
+overlay.loadComments(await api.get('/comments'));
+```
+
+`clearComments()` deliberately fires no per-comment callbacks — it is a reset,
+not a hundred deletions, and echoing it back to your backend is exactly what
+you do not want here.
+
+## Both at once
+
+Nothing stops you combining them. `persistence: "localStorage"` and a set of
+callbacks gives you an offline cache that also syncs — but you then own the
+conflict:
+
+```js
+createCommentOverlay({
+  persistence: 'localStorage',
+  onChange: (event) => {
+    if (event.origin === 'host') return; // our own write, echoed back
+    void queue.push(event);
+  },
+});
+```
+
+The `origin` guard is not optional here. Applying a remote change means calling
+the same method the UI calls, which emits, which sends it straight back — see
+[real-time and multi-user](/docs/guides/realtime).
+
+## Keeping screenshots out of the record
+
+In either mode, every image is a base64 data URL living inside the comment.
+That is the first thing shed under localStorage pressure, and in your own
+database it is a 33 KB string per comment in whatever column holds the JSON.
+
+[`transformScreenshot`](/docs/guides/captures#swapping-images-for-urls) is
+where you swap it for a URL into your own object storage.
+
+```js
+createCommentOverlay({
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url;
+  },
+});
+```

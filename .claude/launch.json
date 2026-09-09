@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "helldots-docs",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["dev", "--port", "3111"],
+      "port": 3111
+    },
+    {
+      "name": "helldots-docs-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": ["start", "--port", "3112"],
+      "port": 3112
+    }
+  ]
+}

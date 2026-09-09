@@ -1,0 +1,134 @@
+---
+title: Inicio rápido
+description: De un proyecto vacío a una capa de comentarios funcionando, y de ahí a tu propio backend.
+icon: Rocket
+---
+
+<Steps>
+
+<Step>
+
+### Instala
+
+```bash
+npm install helldots
+```
+
+</Step>
+
+<Step>
+
+### Monta la capa
+
+Llámalo una vez, desde el navegador, tan pronto como quieras — pospone su propio
+trabajo con el DOM hasta que el documento esté listo.
+
+```js title="app.js"
+import { createCommentOverlay } from 'helldots';
+
+createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+</Step>
+
+<Step>
+
+### Deja un comentario
+
+Aparece una barra de herramientas al pie de la página.
+
+- <kbd>Alt</kbd>+<kbd>C</kbd> (<kbd>Opción</kbd>+<kbd>C</kbd> en macOS) activa el modo comentario.
+- **Haz clic** donde sea para anclar un comentario a ese elemento.
+- **Arrastra** para seleccionar una región y adjuntar un recorte a resolución completa.
+- La bandeja de la barra lista todos los comentarios, los filtra y muestra el panel de métricas.
+
+</Step>
+
+</Steps>
+
+Eso es todo. Los comentarios sobreviven a una recarga, se vuelven a anclar
+cuando la página cambia, y se quedan en el navegador de quien visita.
+
+<Callout title="Pruébalo aquí">
+  Este sitio ejecuta exactamente eso. Abre el
+  [Playground](/es/docs/playground) y maneja el widget a través de su API
+  pública.
+</Callout>
+
+## Conectarlo a tu propio backend
+
+`persistence: "localStorage"` es una comodidad, no el diseño. Quítalo y
+suscríbete en su lugar — cada comentario es JSON plano.
+
+```js title="comments.js"
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name, id: currentUser.id },
+
+  onCommentCreated: (comment) => api.post('/comments', comment),
+  onReplyAdded: (comment, reply) => api.post(`/comments/${comment.id}/replies`, reply),
+  onCommentStatusChanged: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onCommentUpdated: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`),
+
+  // El sitio seguro para cargar: el widget ya montó y las cuentas son reales.
+  onReady: async (o) => {
+    const { orphaned } = o.loadComments(await api.get('/comments'));
+    if (orphaned) console.info(`${orphaned} comentarios perdieron su elemento`);
+  },
+});
+```
+
+Diez callbacks separados es una forma. La otra es un solo flujo, que suele ser
+lo que quieres cuando todo va a un único endpoint:
+
+```js
+createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+});
+```
+
+`ChangeEvent` es una unión discriminada — haz `switch` sobre `event.type` y
+TypeScript estrecha el payload por ti. Ambas vías llevan los mismos eventos en
+los mismos momentos; suscríbete a una, a la otra, o a las dos.
+
+<Callout type="info" title="Carga desde onReady">
+  `loadComments()` se puede llamar en cualquier momento — si se llama antes de
+  que el widget haya montado, los datos se retienen y se aplican al montar. Pero
+  las cuentas que devuelve vuelven a cero, porque todavía no se ha resuelto nada
+  contra el DOM. Usa `onReady` cuando esos números importen.
+</Callout>
+
+## Un componente de React
+
+```jsx title="Comments.jsx"
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+`cleanup()` elimina el widget por completo, que es lo que hace esto seguro bajo
+el doble montaje de React en desarrollo. Para un router del lado del cliente
+además necesitas `notifyNavigation()` — mira
+[frameworks](/es/docs/guides/frameworks).
+
+## Siguientes pasos
+
+<Cards>
+  <Card title="Persistencia" href="/es/docs/guides/persistence" description="localStorage, tu propio almacén, y cómo reconciliar los dos." />
+  <Card title="Frameworks" href="/es/docs/guides/frameworks" description="Next.js, Vue, Astro, SPAs y una etiqueta script simple." />
+  <Card title="Capturas" href="/es/docs/guides/captures" description="Qué es de verdad una captura aquí, y las cuatro palancas sobre su coste." />
+  <Card title="Identidad y permisos" href="/es/docs/guides/identity" description="A quién se atribuye un comentario, y quién puede editarlo o borrarlo." />
+</Cards>

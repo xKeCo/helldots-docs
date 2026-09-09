@@ -1,0 +1,167 @@
+---
+title: Real-time & multi-user
+description: Sync comments over a socket without echoing your own writes back into an infinite loop.
+icon: RefreshCw
+---
+
+Once more than one person is looking at the same page, comments have to travel.
+The pattern is always the same shape — send local changes up, apply remote
+changes down — and it has exactly one trap.
+
+## The echo
+
+Applying a change that arrived over a socket means calling the same public
+method the UI calls. That method emits. The emission goes to your handler. Your
+handler sends it to the server. The server broadcasts it. Forever.
+
+`meta.origin` is what breaks the loop:
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: session.name, id: session.userId },
+
+  onChange: (event) => {
+    if (event.origin === 'host') return; // our own write, echoed back
+    socket.emit('helldots', event);
+  },
+});
+
+socket.on('helldots', (event) => {
+  switch (event.type) {
+    case 'comment:created':
+      overlay.loadComments([event.comment]);
+      break;
+    case 'comment:status-changed':
+      overlay.setCommentStatus(event.comment.id, event.comment.status);
+      break;
+    case 'comment:deleted':
+      overlay.deleteComment(event.id);
+      break;
+  }
+});
+```
+
+| `origin` | Means                                              |
+| -------- | -------------------------------------------------- |
+| `"user"` | Somebody acting inside the widget — a marker, the thread popover, the inbox |
+| `"host"` | Your own code calling a method                     |
+
+The inbox and the thread popover drive the very same public methods you do, so
+this is the only thing that tells the two apart. Without it, a host has to wrap
+every one of its own writes in a flag — which is the library's job, not yours.
+
+<Callout title="anchor-lost is always host">
+  `comment:anchor-lost` carries `origin: "host"` unconditionally, including the
+  repeat that every `notifyNavigation()` produces for a comment whose element is
+  not on the new page. The same guard silences those.
+</Callout>
+
+## What moved, not just that something did
+
+Two events carry the transition, so you never have to diff against a previous
+copy you were keeping for the purpose.
+
+```js
+createCommentOverlay({
+  onCommentStatusChanged: (comment, { from, to }) => {
+    if (from === 'resolved') notify(`${comment.author} reopened this`);
+    if (to === 'resolved') celebrate(comment);
+  },
+
+  onCommentUpdated: (comment, meta) => {
+    if (meta.field === 'priority' && meta.to === 'high') page(comment);
+  },
+});
+```
+
+`comment:updated` is discriminated on `field`, so narrowing it gives you
+correctly typed `from` and `to` for each of the three cases — `string[]` for
+tags, `CommentPriority | null` for priority.
+
+Re-applying a value a comment already holds is a no-op: no event, no write. That
+makes the down-stream idempotent for free.
+
+## One stream or ten callbacks
+
+```js
+createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+});
+```
+
+`ChangeEvent` is a discriminated union — switch on `event.type` and TypeScript
+narrows the payload. The ten specific callbacks carry exactly the same events at
+exactly the same moments, with the same metadata; subscribe either way, or both.
+
+A handler that throws is caught and warned about. It never rolls back the
+mutation that emitted it.
+
+## Reconciling on reconnect
+
+`loadComments()` replaces by id but never removes, so a socket that missed a
+deletion leaves a ghost. After a gap, reset rather than merge:
+
+```js
+socket.on('reconnect', async () => {
+  overlay.clearComments();
+  overlay.loadComments(await api.get(`/comments?page=${location.pathname}`));
+});
+```
+
+`clearComments()` fires no per-comment callbacks — it is a reset, and echoing a
+hundred deletions back to the server is exactly what you do not want here.
+
+## Unread counts
+
+HellDots keeps no read state of its own, because whose "read" it is depends on an
+identity only you can persist. `onCommentOpened` is the signal to build one on:
+
+```js
+createCommentOverlay({
+  onCommentOpened: (comment) => api.post(`/comments/${comment.id}/read`),
+});
+```
+
+It fires when a thread is **actually read** — from its marker or from the inbox
+detail, the only two places the replies are visible. It does not fire when the
+inbox merely re-renders.
+
+## Standing down while somebody points
+
+The keyboard shortcut never reaches your code, so an app that has to get out of
+the way while a user is picking an element has no other signal:
+
+```js
+createCommentOverlay({
+  onCommentModeChanged: (active) => {
+    carousel.paused = active; // your drag-and-drop would fight the picker
+    dropzone.disabled = active;
+  },
+});
+```
+
+It fires however the mode was flipped — the toolbar button, the shortcut, the
+inbox empty state, or the automatic switch-off after a comment is saved.
+
+## Multi-tab, without a socket
+
+`persistence: "localStorage"` assumes one active tab per page. Writes from
+another tab are preserved on the next sync, but two tabs editing the same
+comment resolve last-write-wins, and a comment deleted in one tab can reappear if
+another tab still holding it in memory saves afterwards.
+
+If real multi-tab editing matters, persist through the callbacks instead — even
+if "the backend" is a `BroadcastChannel`:
+
+```js
+const channel = new BroadcastChannel('helldots');
+
+const overlay = createCommentOverlay({
+  onChange: (event) => {
+    if (event.origin === 'host') return;
+    channel.postMessage(event);
+  },
+});
+
+channel.onmessage = ({ data }) => applyRemote(overlay, data);
+```

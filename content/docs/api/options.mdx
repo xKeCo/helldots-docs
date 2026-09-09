@@ -1,0 +1,225 @@
+---
+title: Options
+description: Every field of CommentOverlayOptions, grouped by what it governs.
+icon: Settings2
+---
+
+Every option is optional. `createCommentOverlay()` with no argument at all
+mounts a working widget.
+
+```ts
+import type { CommentOverlayOptions } from 'helldots';
+```
+
+## Identity
+
+<TypeTable
+  type={{
+    user: {
+      type: '{ name: string; id?: string }',
+      default: 'anonymous',
+      description: 'Author of new comments, replies and reactions. `name` is displayed; `id` is never rendered, persists as `authorId`, and is what a reaction is keyed on. Pass an id whenever two people can share a display name.',
+    },
+    can: {
+      type: '(action, target) => boolean',
+      default: 'own records only',
+      description: 'Vetoes editing and deleting a comment or reply from inside the widget. Return literal true to allow — anything else, including an undefined return or a throw, denies. Never gates your own method calls.',
+      parameters: [
+        { name: 'action', description: '"edit:comment" | "delete:comment" | "edit:reply" | "delete:reply"' },
+        { name: 'target', description: '{ id, author, authorId }, plus commentId on the two reply actions' },
+      ],
+      returns: 'boolean',
+    },
+  }}
+/>
+
+See [identity & permissions](/docs/guides/identity).
+
+## Persistence
+
+<TypeTable
+  type={{
+    persistence: {
+      type: '"localStorage" | "none"',
+      default: '"none"',
+      description: 'Auto save and restore under one key shared across your app, or nothing at all — in which case you persist through the callbacks.',
+    },
+  }}
+/>
+
+See [persistence](/docs/guides/persistence).
+
+## Captures
+
+<TypeTable
+  type={{
+    autoScreenshot: {
+      type: 'boolean',
+      default: 'true',
+      description: 'Capture a viewport screenshot and an environment snapshot on every new comment. A dragged region still attaches its crop when this is off — that one was asked for.',
+    },
+    fastCapture: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Narrow the renderer’s computed-style enumeration to a curated allow-list instead of all ~527 properties. ~2.7× off that phase, which is ~91% of a capture. A property the list does not name is simply absent from the image.',
+    },
+    skipIframeContent: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Render same-origin iframes blank instead of cloning their documents. The <iframe> element itself is kept, so the crop stays in register. Nothing to gain on a cross-origin frame.',
+    },
+    captureTimeout: {
+      type: 'number',
+      default: '30000',
+      description: 'Milliseconds one remote asset may hold a capture up. It drives two sequential waits on the same asset, so the real cost is ~2× this number. Only a finite positive number is honoured — 0 means "never give up" and Infinity aborts everything immediately.',
+    },
+    embedCrossOriginFonts: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Re-fetch stylesheets the renderer cannot read, so their web fonts survive into screenshots. Off by default because a comment widget making third-party requests should be the host’s decision.',
+    },
+    transformScreenshot: {
+      type: '(dataUrl, info) => Promise<string>',
+      description: 'Called for every image the widget acquires. Return the string to store in its place — typically a URL into your own object storage. Fail-open: a rejection leaves the data URL in place and reports onError(error, "transform").',
+      parameters: [
+        { name: 'dataUrl', description: 'The image as a base64 data URL' },
+        { name: 'info', description: '{ kind: "context" | "attachment"; commentId: CommentId }' },
+      ],
+      returns: 'Promise<string>',
+    },
+  }}
+/>
+
+See [captures](/docs/guides/captures).
+
+## Navigation & links
+
+<TypeTable
+  type={{
+    navigate: {
+      type: '(page: string) => void',
+      default: 'full page load',
+      description: 'Called instead of a full page load when the widget jumps to another page — the inbox’s "view on its page". Hand it your router’s push, and call notifyNavigation() once the route has rendered.',
+    },
+    autoDetectNavigation: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Run notifyNavigation() automatically on popstate (back and forward). Opt-in and popstate-only: pushState routing still needs an explicit call from your router’s hook.',
+    },
+    linkParam: {
+      type: 'string',
+      default: '"helldotsComment"',
+      description: 'Query parameter carrying a comment id in "Copy link" URLs, read back on startup to open that comment. Override it when your app already routes on that name.',
+    },
+    onCommentRequested: {
+      type: '(id) => void | Promise<unknown>',
+      description: 'A link points at a comment the widget does not hold — fired once per id, not once per attempt. Return a promise and the link is retried once it settles. This is what makes lazy loading work.',
+    },
+  }}
+/>
+
+See [deep links](/docs/guides/deep-links) and
+[frameworks](/docs/guides/frameworks#single-page-apps).
+
+## Interface
+
+<TypeTable
+  type={{
+    locale: {
+      type: 'string',
+      default: 'browser language',
+      description: 'UI language. "en" and "es" ship today; any other value falls back to English, and a locale missing individual keys falls back per key. Typed as string so you can pass a runtime-detected code without a cast.',
+    },
+    shortcutKey: {
+      type: 'string',
+      default: '"c"',
+      description: 'The key that toggles comment mode.',
+    },
+    shortcutModifier: {
+      type: '"alt" | "ctrl" | "shift"',
+      default: '"alt"',
+      description: 'The modifier for that key. Alt is Option on macOS.',
+    },
+    autoInit: {
+      type: 'boolean',
+      default: 'true',
+      description: 'When false, createCommentOverlay returns an initializer to call yourself instead of mounting. Meaningless on the CommentOverlay constructor, which omits it.',
+    },
+  }}
+/>
+
+## Lifecycle callbacks
+
+<TypeTable
+  type={{
+    onReady: {
+      type: '(overlay: CommentOverlay) => void',
+      description: 'The widget has mounted and every method is safe to drive. Receives the instance, because when the document is already parsed the mount happens inside the constructor — before the factory has returned. The right place to loadComments().',
+    },
+    onError: {
+      type: '(error: unknown, context: ErrorContext) => void',
+      description: 'Something survivable went wrong: "capture", "storage", "load", "link" or "transform". Each already warns on the console and the widget carries on — this is how they reach your own logging.',
+    },
+    onCommentModeChanged: {
+      type: '(active: boolean) => void',
+      description: 'Comment mode turned on or off, however it was flipped — the toolbar, the shortcut, the inbox empty state, or the automatic switch-off after a comment is saved.',
+    },
+    onCommentOpened: {
+      type: '(comment: SerializedComment) => void',
+      description: 'Somebody opened a comment’s full thread, from its marker or the inbox detail. Build unread counts on this — HellDots keeps no read state of its own.',
+    },
+  }}
+/>
+
+## Change callbacks
+
+One stream, or ten specific handlers carrying the same events at the same
+moments. Subscribe either way, or both.
+
+<TypeTable
+  type={{
+    onChange: {
+      type: '(event: ChangeEvent) => void',
+      description: 'Fires for every change, alongside whichever specific callback carries the same event. ChangeEvent is a discriminated union on `type`, with ChangeMeta flattened onto it.',
+    },
+  }}
+/>
+
+The ten specific ones are documented in full on
+[events](/docs/api/events): `onCommentCreated`, `onCommentEdited`,
+`onCommentDeleted`, `onCommentStatusChanged`, `onCommentUpdated`,
+`onAnchorLost`, `onReplyAdded`, `onReplyEdited`, `onReplyDeleted` and
+`onReactionToggled`.
+
+## A fully wired example
+
+```ts
+import { createCommentOverlay, type CommentOverlayOptions } from 'helldots';
+
+const options: CommentOverlayOptions = {
+  user: { name: session.name, id: session.userId },
+  can: (action, target) => session.isAdmin || target.authorId === session.userId,
+
+  locale: navigator.language,
+  fastCapture: true,
+  captureTimeout: 8000,
+
+  navigate: (page) => router.push(page),
+  autoDetectNavigation: true,
+
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url;
+  },
+
+  onChange: (event) => {
+    if (event.origin === 'host') return;
+    api.post('/helldots-events', event);
+  },
+  onError: (error, context) => logger.warn({ context }, String(error)),
+  onReady: async (overlay) => overlay.loadComments(await api.get('/comments')),
+};
+
+const overlay = createCommentOverlay(options);
+```

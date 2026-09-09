@@ -1,0 +1,108 @@
+---
+title: Introduction
+description: A drop-in comment overlay for web apps — click anywhere to leave a comment anchored to that element, with a screenshot and the environment captured for you.
+icon: BookOpen
+---
+
+HellDots puts a comment layer over your app. Somebody on your team clicks a
+button, a heading, a broken card — anywhere — types what is wrong with it, and
+the comment stays anchored to that element. What comes back is not a sentence in
+a chat thread; it is a record that already answers the questions you would have
+had to ask.
+
+```bash
+npm install helldots
+```
+
+```js
+import { createCommentOverlay } from 'helldots';
+
+createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+Two lines and a toolbar appears at the bottom of the page. <kbd>Alt</kbd>+<kbd>C</kbd>
+toggles comment mode; click to place a comment, or drag to select a region and
+attach a crop of it.
+
+<Callout title="You are looking at it">
+  This documentation site runs HellDots on itself. The toolbar at the bottom of
+  this page is real — leave a comment anywhere in these docs and it will be here
+  when you come back. See the [Playground](/docs/playground).
+</Callout>
+
+## What a comment carries
+
+A comment is never just its text. Every one of them records:
+
+<Cards>
+  <Card title="A screenshot" description="The page as the reporter saw it — JPEG at half scale, with the widget's own UI excluded. Drag a region and you also get a full-resolution PNG crop of exactly what was selected." />
+  <Card title="The environment" description="URL, viewport, screen resolution, device pixel ratio, browser, OS and language. A bug filed at 390×844 on iOS Safari says so, without anyone having to ask." />
+  <Card title="Where it was" description="A CSS selector, a DOM path and a structural fingerprint of the element — enough to re-find it after the page changes." />
+  <Card title="Who and when" description="The identity your app declared, plus an append-only audit trail of every edit, status move and reclassification." />
+</Cards>
+
+## Comments that survive the page
+
+The interesting problem in an overlay like this is not drawing a dot. It is
+that the page underneath the dot keeps changing.
+
+HellDots stores three things per anchor — a best-effort unique selector, the
+selector of the exact element clicked, and a fingerprint of the element
+(tag, a text snippet, its stable attributes, its position among siblings). On
+the next load it resolves the comment against the new DOM. If the element moved
+or was rebuilt, the comment re-anchors to it. If it is genuinely gone, the
+comment is marked `orphaned` and shown in the inbox rather than silently
+dropped.
+
+The three states an anchor can be in:
+
+| State      | Meaning                                                              |
+| ---------- | -------------------------------------------------------------------- |
+| `anchored` | The element was found on this page; the marker sits on it            |
+| `orphaned` | This is the comment's page, but its element no longer exists         |
+| `inactive` | The comment belongs to a different page than the one you are looking at |
+
+## Your data stays yours
+
+Nothing is sent anywhere. There is no HellDots backend, no account, no
+telemetry. You pick one of two ways to keep comments:
+
+<Tabs items={['localStorage', 'Your own backend']}>
+  <Tab value="localStorage">
+
+Set `persistence: "localStorage"` and the widget saves and restores everything
+by itself, in the visitor's browser. Right for a staging environment, a demo,
+or a solo review pass.
+
+```js
+createCommentOverlay({ persistence: 'localStorage' });
+```
+
+  </Tab>
+  <Tab value="Your own backend">
+
+Leave persistence off and subscribe to the changes. Every comment is plain
+JSON — hand `serializeComments()` output to your API and pass it back to
+`loadComments()` later.
+
+```js
+const overlay = createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+  onReady: async (o) => o.loadComments(await api.get('/comments')),
+});
+```
+
+  </Tab>
+</Tabs>
+
+## Where to go next
+
+<Cards>
+  <Card title="Installation" href="/docs/installation" description="Package managers, the peer dependency, ESM and the CDN build." />
+  <Card title="Quick start" href="/docs/quickstart" description="From an empty project to a working overlay." />
+  <Card title="Playground" href="/docs/playground" description="Drive the widget running on this very site." />
+  <Card title="API reference" href="/docs/api/options" description="Every option, method, event and type." />
+</Cards>

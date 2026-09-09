@@ -1,0 +1,161 @@
+---
+title: Identity & permissions
+description: Who a comment is attributed to, why the display name travels with the record, and who is allowed to edit or delete it.
+icon: UserCheck
+---
+
+**HellDots authenticates nobody.** It takes whoever your app says is signed in,
+records that, and never checks. Everything on this page follows from that.
+
+```js
+createCommentOverlay({
+  user: { name: currentUser.fullName, id: currentUser.id },
+});
+```
+
+- **`name`** is the display name. It is what appears on every comment, reply and
+  audit entry.
+- **`id`** is optional, never rendered, and persisted as `authorId` on
+  everything that user creates. It is also what a reaction is keyed on.
+
+```js
+overlay.serializeComments()[0];
+// { author: "Ana Pérez", authorId: "u_42", ... }
+```
+
+## Pass an id if two people can share a name
+
+Without `id`, two teammates called "Alex" are one author: they own each other's
+comments, they share a reaction, and the audit trail cannot tell them apart.
+There is no fix for that inside the widget — the identity has to come from you.
+
+With no `user` at all, every record is written by the same anonymous actor,
+which is coherent: nothing is ever hidden from anyone.
+
+### An app with no accounts
+
+Mint the id yourself. You control the key, the lifetime and the consent story,
+which HellDots cannot:
+
+```js
+const KEY = 'my-app-anon-id';
+let id = localStorage.getItem(KEY);
+if (!id) localStorage.setItem(KEY, (id = crypto.randomUUID()));
+
+createCommentOverlay({ user: { name: typedName, id } });
+```
+
+Bear in mind what that identifies: a browser profile, not a person.
+
+## The name travels with the record
+
+Both fields ride along in `serializeComments()` output, on comments and replies
+alike. That is deliberate: a store holding nothing but comments — its own
+database, no users table — renders every author and every audit entry **without a
+single lookup back into your app**.
+
+What the denormalised name costs is that a rename does not travel backwards. Old
+comments keep the name that was current when they were written, which is what an
+audit trail should do. The `id` is what lets you reconcile if you want the
+current one.
+
+`authorId` is `null` when you pass no `id`, and absent on records written before
+the field existed. It is additive — no stored corpus needs migrating.
+
+## Identity that resolves late
+
+Session data usually arrives after the first paint. `setUser` replaces the
+identity new records are attributed to, without tearing the widget down:
+
+```js
+const overlay = createCommentOverlay({ persistence: 'localStorage' });
+
+const session = await auth.whoami();
+overlay.setUser({ name: session.name, id: session.userId });
+```
+
+Everything already recorded keeps the author it was written with. Pass `null` to
+return to the anonymous author — on logout, or when switching workspace.
+
+It returns `false`, changing nothing, for anything that is neither `null` nor an
+object with a non-blank `name`. The alternative before it existed was
+`cleanup()` and a rebuild, which throws away every loaded comment and whatever
+panel was open.
+
+## Who can edit and delete
+
+By default **you may edit and delete what carries your identity, and nothing
+else.** Somebody else's comment simply has no Edit or Delete in its ⋯ menu.
+
+The rule compares `authorId` against your `user.id`, falling back to the display
+name when neither side has an id.
+
+### Overriding the rule
+
+Pass `can` when the default is not yours — moderators, an owner role, a
+read-only viewer:
+
+```js
+createCommentOverlay({
+  user: { name: session.name, id: session.userId },
+  can: (action, target) => {
+    if (session.role === 'admin') return true;
+    if (session.role === 'viewer') return false;
+    return target.authorId === session.userId;
+  },
+});
+```
+
+`action` is one of four:
+
+| Action            | Target carries                          |
+| ----------------- | --------------------------------------- |
+| `edit:comment`    | `{ id, author, authorId }`              |
+| `delete:comment`  | `{ id, author, authorId }`              |
+| `edit:reply`      | `{ id, author, authorId, commentId }`   |
+| `delete:reply`    | `{ id, author, authorId, commentId }`   |
+
+`commentId` is present on the two reply actions because a reply's id is unique
+only inside its thread.
+
+<Callout type="warn" title="Return literal true to allow">
+  Anything else denies — including the `undefined` of a branch that forgot to
+  return. A `can` that throws denies too, while warning to the console. A
+  permission predicate is the wrong place to be generous.
+</Callout>
+
+Only those four actions are asked about. **Status, type, priority, tags,
+reactions and replying stay open to everyone** — triage is shared work, and all
+of it is reversible.
+
+### Asking the same rule from your own UI
+
+If you put a delete button in your own chrome, ask the widget rather than
+keeping a second copy of the rule in step:
+
+```js
+overlay.can('delete:comment', { id, author, authorId }); // → boolean
+```
+
+### Your own calls are never refused
+
+`can` gates the widget's menus and the mutations that come from a click inside
+it. `overlay.deleteComment(id)` from your code always goes through — so a
+moderation flow your backend has already authorized is not blocked by a
+client-side rule it outranks.
+
+<Callout type="error" title="This is not authorization">
+  HellDots runs in the page. Anyone with a console reaches the API directly no
+  matter what `can` returns. What it removes is the accidental path — the button
+  that should never have been offered.
+
+  Real enforcement belongs on your server: check `authorId` against the session
+  when the `comment:deleted` or `comment:edited` event reaches your backend.
+</Callout>
+
+## What the record asserts
+
+The audit trail records the `user` your app declared at the moment of each
+action. It says what your application asserted about who acted — not a verified
+fact. If you need the stronger claim, verify it on your own backend; `onChange`
+carries every mutation there.

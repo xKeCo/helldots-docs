@@ -1,0 +1,225 @@
+---
+title: Opciones
+description: Cada campo de CommentOverlayOptions, agrupado por lo que gobierna.
+icon: Settings2
+---
+
+Todas las opciones son opcionales. `createCommentOverlay()` sin ningún argumento
+monta un widget funcional.
+
+```ts
+import type { CommentOverlayOptions } from 'helldots';
+```
+
+## Identidad
+
+<TypeTable
+  type={{
+    user: {
+      type: '{ name: string; id?: string }',
+      default: 'anónimo',
+      description: 'Autor de los comentarios, respuestas y reacciones nuevos. `name` se muestra; `id` nunca se muestra, se persiste como `authorId`, y es la clave con la que se guarda una reacción. Pasa un id siempre que dos personas puedan compartir nombre visible.',
+    },
+    can: {
+      type: '(action, target) => boolean',
+      default: 'solo registros propios',
+      description: 'Veta editar y borrar un comentario o respuesta desde dentro del widget. Devuelve literalmente true para permitir — cualquier otra cosa, incluido un return undefined o un throw, deniega. Nunca regula tus propias llamadas a métodos.',
+      parameters: [
+        { name: 'action', description: '"edit:comment" | "delete:comment" | "edit:reply" | "delete:reply"' },
+        { name: 'target', description: '{ id, author, authorId }, más commentId en las dos acciones de respuesta' },
+      ],
+      returns: 'boolean',
+    },
+  }}
+/>
+
+Mira [identidad y permisos](/es/docs/guides/identity).
+
+## Persistencia
+
+<TypeTable
+  type={{
+    persistence: {
+      type: '"localStorage" | "none"',
+      default: '"none"',
+      description: 'Guardar y restaurar automáticamente bajo una clave compartida por toda tu aplicación, o nada en absoluto — en cuyo caso persistes tú mediante los callbacks.',
+    },
+  }}
+/>
+
+Mira [persistencia](/es/docs/guides/persistence).
+
+## Capturas
+
+<TypeTable
+  type={{
+    autoScreenshot: {
+      type: 'boolean',
+      default: 'true',
+      description: 'Capturar el viewport y una instantánea del entorno en cada comentario nuevo. Una región arrastrada sigue adjuntando su recorte con esto desactivado — esa sí se pidió.',
+    },
+    fastCapture: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Reducir la enumeración de estilos calculados del renderizador a una lista curada en lugar de las ~527 propiedades. ~2,7× menos en esa fase, que es el ~91% de una captura. Una propiedad que la lista no nombra simplemente falta en la imagen.',
+    },
+    skipIframeContent: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Renderizar los iframes del mismo origen en blanco en lugar de clonar sus documentos. El propio elemento <iframe> se conserva, así que el recorte no se descuadra. Nada que ganar con un frame de otro origen.',
+    },
+    captureTimeout: {
+      type: 'number',
+      default: '30000',
+      description: 'Milisegundos que un recurso remoto puede retener una captura. Gobierna dos esperas en secuencia sobre el mismo recurso, así que el coste real es ~2× este número. Solo se respeta un número finito y positivo — 0 significa "no te rindas nunca" e Infinity aborta todo de inmediato.',
+    },
+    embedCrossOriginFonts: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Volver a pedir las hojas de estilo que el renderizador no puede leer, para que sus fuentes web sobrevivan hasta las capturas. Desactivado por defecto porque que una capa de comentarios haga peticiones a terceros debería decidirlo quien la integra.',
+    },
+    transformScreenshot: {
+      type: '(dataUrl, info) => Promise<string>',
+      description: 'Se llama para cada imagen que el widget adquiere. Devuelve la cadena que se guardará en su lugar — normalmente una URL a tu propio almacenamiento de objetos. A prueba de fallos hacia abierto: un rechazo deja la data URL en su sitio y reporta onError(error, "transform").',
+      parameters: [
+        { name: 'dataUrl', description: 'La imagen como data URL en base64' },
+        { name: 'info', description: '{ kind: "context" | "attachment"; commentId: CommentId }' },
+      ],
+      returns: 'Promise<string>',
+    },
+  }}
+/>
+
+Mira [capturas](/es/docs/guides/captures).
+
+## Navegación y enlaces
+
+<TypeTable
+  type={{
+    navigate: {
+      type: '(page: string) => void',
+      default: 'recarga completa',
+      description: 'Se llama en lugar de una recarga completa cuando el widget salta a otra página — el "ver en su página" de la bandeja. Entrégale el push de tu router, y llama a notifyNavigation() una vez la ruta se haya renderizado.',
+    },
+    autoDetectNavigation: {
+      type: 'boolean',
+      default: 'false',
+      description: 'Ejecutar notifyNavigation() automáticamente en popstate (atrás y adelante). Opcional y solo para popstate: el enrutado con pushState sigue necesitando una llamada explícita desde el gancho de tu router.',
+    },
+    linkParam: {
+      type: 'string',
+      default: '"helldotsComment"',
+      description: 'Parámetro de consulta que lleva el id de un comentario en las URLs de "Copiar enlace", leído al arrancar para abrir ese comentario. Cámbialo cuando tu aplicación ya enrute con ese nombre.',
+    },
+    onCommentRequested: {
+      type: '(id) => void | Promise<unknown>',
+      description: 'Un enlace apunta a un comentario que el widget no tiene — se dispara una vez por id, no una vez por intento. Devuelve una promesa y el enlace se reintenta cuando se resuelva. Esto es lo que hace posible la carga bajo demanda.',
+    },
+  }}
+/>
+
+Mira [enlaces directos](/es/docs/guides/deep-links) y
+[frameworks](/es/docs/guides/frameworks#aplicaciones-de-una-sola-página).
+
+## Interfaz
+
+<TypeTable
+  type={{
+    locale: {
+      type: 'string',
+      default: 'idioma del navegador',
+      description: 'Idioma de la interfaz. Hoy vienen "en" y "es"; cualquier otro valor recae en inglés, y un idioma al que le falten claves sueltas recae clave por clave. Tipado como string para que puedas pasar un código detectado en tiempo de ejecución sin un cast.',
+    },
+    shortcutKey: {
+      type: 'string',
+      default: '"c"',
+      description: 'La tecla que activa el modo comentario.',
+    },
+    shortcutModifier: {
+      type: '"alt" | "ctrl" | "shift"',
+      default: '"alt"',
+      description: 'El modificador para esa tecla. Alt es Opción en macOS.',
+    },
+    autoInit: {
+      type: 'boolean',
+      default: 'true',
+      description: 'Con false, createCommentOverlay devuelve un inicializador para que lo llames tú en lugar de montar. No significa nada en el constructor de CommentOverlay, que lo omite.',
+    },
+  }}
+/>
+
+## Callbacks de ciclo de vida
+
+<TypeTable
+  type={{
+    onReady: {
+      type: '(overlay: CommentOverlay) => void',
+      description: 'El widget ha montado y todos los métodos son seguros de usar. Recibe la instancia porque, cuando el documento ya está parseado, el montaje ocurre dentro del constructor — antes de que la factoría haya devuelto. El sitio correcto para loadComments().',
+    },
+    onError: {
+      type: '(error: unknown, context: ErrorContext) => void',
+      description: 'Algo salió mal pero era recuperable: "capture", "storage", "load", "link" o "transform". Cada uno ya avisa por consola y el widget sigue — esto es cómo llegan a tu propio registro de errores.',
+    },
+    onCommentModeChanged: {
+      type: '(active: boolean) => void',
+      description: 'El modo comentario se activó o desactivó, sea como sea que se accionó — la barra, el atajo, el estado vacío de la bandeja, o el apagado automático tras guardar un comentario.',
+    },
+    onCommentOpened: {
+      type: '(comment: SerializedComment) => void',
+      description: 'Alguien abrió el hilo completo de un comentario, desde su marcador o desde el detalle de la bandeja. Construye los contadores de no leídos sobre esto — HellDots no guarda ningún estado de lectura propio.',
+    },
+  }}
+/>
+
+## Callbacks de cambio
+
+Un flujo, o diez manejadores específicos que llevan los mismos eventos en los
+mismos momentos. Suscríbete a unos, a otros, o a los dos.
+
+<TypeTable
+  type={{
+    onChange: {
+      type: '(event: ChangeEvent) => void',
+      description: 'Se dispara con cada cambio, junto al callback específico que lleve el mismo evento. ChangeEvent es una unión discriminada por `type`, con ChangeMeta aplanado encima.',
+    },
+  }}
+/>
+
+Los diez específicos están documentados por completo en
+[eventos](/es/docs/api/events): `onCommentCreated`, `onCommentEdited`,
+`onCommentDeleted`, `onCommentStatusChanged`, `onCommentUpdated`,
+`onAnchorLost`, `onReplyAdded`, `onReplyEdited`, `onReplyDeleted` y
+`onReactionToggled`.
+
+## Un ejemplo completamente cableado
+
+```ts
+import { createCommentOverlay, type CommentOverlayOptions } from 'helldots';
+
+const options: CommentOverlayOptions = {
+  user: { name: session.name, id: session.userId },
+  can: (action, target) => session.isAdmin || target.authorId === session.userId,
+
+  locale: navigator.language,
+  fastCapture: true,
+  captureTimeout: 8000,
+
+  navigate: (page) => router.push(page),
+  autoDetectNavigation: true,
+
+  transformScreenshot: async (dataUrl, { kind, commentId }) => {
+    const blob = await (await fetch(dataUrl)).blob();
+    const { url } = await api.upload(blob, { kind, commentId });
+    return url;
+  },
+
+  onChange: (event) => {
+    if (event.origin === 'host') return;
+    api.post('/helldots-events', event);
+  },
+  onError: (error, context) => logger.warn({ context }, String(error)),
+  onReady: async (overlay) => overlay.loadComments(await api.get('/comments')),
+};
+
+const overlay = createCommentOverlay(options);
+```

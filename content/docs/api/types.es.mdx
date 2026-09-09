@@ -1,0 +1,318 @@
+---
+title: Tipos
+description: Cada tipo exportado — las formas de los registros, el ancla, la instantánea de contexto, el registro de auditoría y las métricas.
+icon: FileType
+---
+
+Las definiciones de TypeScript vienen con el paquete. No hay ningún `@types` que
+instalar.
+
+```ts
+import type {
+  Comment,
+  SerializedComment,
+  CommentReply,
+  CommentAnchor,
+  CommentAnchorFingerprint,
+  CommentContext,
+  CommentMetrics,
+  CommentId,
+  CommentStatus,
+  CommentType,
+  CommentPriority,
+  AnchorState,
+  AuditEvent,
+  AuditActor,
+  AuditEventType,
+  PermissionAction,
+  PermissionTarget,
+  ChangeEvent,
+  ChangeMeta,
+  ChangeOrigin,
+  StatusChangeMeta,
+  UpdateMeta,
+  ErrorContext,
+  CommentOverlayOptions,
+} from 'helldots';
+```
+
+## CommentId
+
+```ts
+type CommentId = string | number;
+```
+
+Los ids nuevos son cadenas nanoid de 21 caracteres. La rama `number` **no es
+lastre heredado que se vaya a quitar más adelante**: los comentarios creados antes
+de ese cambio siguen en el `localStorage` de quienes integran y en sus propios
+backends, y se siguen resolviendo.
+
+<Callout type="warn" title="Compara con String()">
+  Usa `String(a) === String(b)` en lugar de `===` cuando cualquiera de los dos
+  lados pueda haber cruzado una frontera de JSON o de URL — un id numérico leído
+  de una cadena de consulta es una cadena.
+</Callout>
+
+## Las uniones
+
+```ts
+type CommentStatus = 'open' | 'in_progress' | 'in_review' | 'resolved';
+type CommentType = 'bug' | 'suggestion' | 'question' | 'improvement';
+type CommentPriority = 'high' | 'medium' | 'low';
+type AnchorState = 'anchored' | 'orphaned' | 'inactive';
+type ChangeOrigin = 'user' | 'host';
+type ErrorContext = 'capture' | 'storage' | 'load' | 'link' | 'transform';
+type AuditEventType = 'created' | 'edited' | 'status' | 'classified';
+type PermissionAction =
+  | 'edit:comment'
+  | 'delete:comment'
+  | 'edit:reply'
+  | 'delete:reply';
+```
+
+`type` y `priority` son cada uno `T | null` en un registro. **`null` es un valor,
+no una ausencia** — significa deliberadamente sin clasificar.
+
+## SerializedComment
+
+La forma segura en JSON: lo que produce `serializeComments()` y lo que acepta
+`loadComments()`.
+
+```ts
+interface SerializedComment {
+  /** Sellado como 1 por serializeComments; ausente en payloads guardados antes de que existiera. */
+  schemaVersion?: number;
+  id: CommentId;
+  text: string;
+  /** Marca de tiempo ISO de la última edición; null si nunca se editó. */
+  editedAt?: string | null;
+  anchor: CommentAnchor | null;
+  /** El location.pathname donde se creó el comentario. */
+  page: string;
+  /** Registro de auditoría de solo anexado. Opcional y ausente por defecto. */
+  history?: AuditEvent[] | null;
+  replies: CommentReply[];
+  author: string;
+  /** Del user.id declarado en la creación. Nunca se muestra. */
+  authorId?: string | null;
+  createdAt: string;
+  screenshots: string[];
+  status: CommentStatus;
+  type: CommentType | null;
+  priority: CommentPriority | null;
+  tags: string[];
+  /** Se pone al entrar en "resolved", se limpia al salir. */
+  resolvedAt: string | null;
+  context: CommentContext | null;
+  /** La captura automática del viewport, como data URL JPEG. */
+  contextScreenshot: string | null;
+  /** emoji → las claves de actor que reaccionaron. Null cuando nadie lo hizo. */
+  reactions: Record<string, string[]> | null;
+}
+```
+
+Varios campos son **opcionales y están ausentes por defecto** — `history`,
+`authorId`, `editedAt`, `schemaVersion`. Los registros escritos antes de que
+existieran simplemente no los tienen, así que no hay migración de por medio.
+`null` en lugar de `[]` o `{}` mantiene un corpus intacto libre de bytes extra.
+
+## Comment
+
+La forma viva en `overlay.comments`. Todo lo que tiene `SerializedComment`, más
+cuatro campos de solo tiempo de ejecución que no se serializan:
+
+```ts
+interface Comment {
+  // …todos los campos de SerializedComment salvo schemaVersion…
+
+  /** Elemento ancla vivo; null mientras está huérfano o inactivo. */
+  container: HTMLElement | null;
+  relativeX: number;
+  relativeY: number;
+  anchorState: AnchorState;
+  /** El elemento ancla tiene ahora mismo tamaño cero. */
+  hidden: boolean;
+  /** El elemento exacto sobre el que se hizo clic. */
+  target?: HTMLElement | null;
+}
+```
+
+Usa `serializeComments()` para todo lo que salga de la página.
+
+## CommentReply
+
+```ts
+interface CommentReply {
+  id: CommentId;
+  text: string;
+  author: string;
+  authorId?: string | null;
+  timestamp: string;
+  screenshots?: string[];
+  editedAt?: string | null;
+  reactions?: Record<string, string[]> | null;
+}
+```
+
+El id de una respuesta es único **solo dentro de su hilo**, y por eso
+`deleteReply`, `editReply` y `toggleReplyReaction` piden todos también el id del
+comentario.
+
+Fíjate en `timestamp`, no `createdAt` — las respuestas son anteriores a la
+nomenclatura de campos de los comentarios.
+
+## CommentAnchor
+
+Cómo un comentario vuelve a encontrar su elemento después de que la página haya
+cambiado.
+
+```ts
+interface CommentAnchor {
+  version: 1;
+  /** Selector CSS único en la medida de lo posible, o null si no se pudo generar. */
+  selector: string | null;
+  /** Selector del elemento exacto pulsado, cuando es más profundo que el contenedor. */
+  targetSelector?: string | null;
+  fingerprint: CommentAnchorFingerprint;
+  /** Fracción (0–1) de la caja del elemento ancla, capturada en la creación. */
+  relativeX: number;
+  relativeY: number;
+}
+
+interface CommentAnchorFingerprint {
+  tagName: string;
+  /** Primeros ~64 caracteres del textContent normalizado del elemento. */
+  textSnippet: string;
+  /** Solo atributos estables — id, name, role, aria-label, data-* no de framework. */
+  attributes: Record<string, string>;
+  /** Posición base 0 entre hermanos de la misma etiqueta en el momento de crearlo. */
+  siblingIndex: number;
+  siblingCount: number;
+}
+```
+
+La huella es lo que sobrevive cuando un selector queda obsoleto. Los atributos
+`data-*` generados por frameworks se excluyen a propósito — cambian en cada build
+y harían la huella inútil.
+
+## CommentContext
+
+La instantánea del entorno, tomada en la creación.
+
+```ts
+interface CommentContext {
+  version: 1;
+  /** El location.href completo en el momento de la creación. */
+  url: string;
+  viewport: { width: number; height: number };
+  /** screen.width / screen.height. */
+  screen: { width: number; height: number };
+  devicePixelRatio: number;
+  /** Siempre se guarda, incluso cuando falla el análisis de navegador/SO. */
+  userAgent: string;
+  browser: { name: string; version: string };
+  os: { name: string; version: string };
+  language: string;
+}
+```
+
+## AuditEvent
+
+```ts
+interface AuditActor {
+  /** Del user.id, cuando quien integra proporciona uno. Nunca se muestra. */
+  id?: string;
+  /** El nombre visible en el momento de la acción. */
+  name: string;
+}
+
+interface AuditEvent {
+  type: AuditEventType;
+  /** Marca de tiempo ISO, del reloj del cliente que actúa. */
+  at: string;
+  actor: AuditActor;
+  /** Solo en "classified": qué campo se movió. */
+  field?: 'type' | 'priority' | 'tags';
+  /** Los dos extremos de la transición. Ausentes en "created", "edited" y cambios de etiquetas. */
+  from?: string | null;
+  to?: string | null;
+}
+```
+
+`null` en `from`/`to` es un valor, no una ausencia — es como se leen el tipo y la
+prioridad cuando están deliberadamente sin asignar.
+
+Las marcas de tiempo vienen del reloj del cliente que actúa, así que fusionar
+corpus escritos en máquinas cuyos relojes discrepan puede producir una entrada
+anterior al comentario al que pertenece. Las duraciones derivadas de estas se
+recortan a cero en lugar de mostrarse negativas.
+
+## CommentMetrics
+
+```ts
+interface CommentMetrics {
+  total: number;
+  byStatus: Record<CommentStatus, number>;
+  /** `unset` contiene los comentarios dejados deliberadamente sin clasificar. */
+  byType: Record<CommentType | 'unset', number>;
+  /** `unset` contiene los comentarios dejados deliberadamente sin priorizar. */
+  byPriority: Record<CommentPriority | 'unset', number>;
+  /** Solo los días con actividad — los huecos no se rellenan. */
+  overTime: Array<{ date: string; count: number }>;
+  resolution: {
+    resolvedCount: number;
+    /** Comentarios que se resolvieron, se reabrieron y se resolvieron de nuevo. */
+    reopenedCount: number;
+    /** De la resolución vigente; null cuando no hay nada resuelto. */
+    averageMs: number | null;
+    medianMs: number | null;
+  };
+}
+```
+
+Todos los cubos están presentes aunque estén vacíos, así que se pueden indexar sin
+comprobar — una clave ausente y un cero serían indistinguibles de otro modo.
+
+## PermissionTarget
+
+Lo que se le cuenta a `can` sobre el registro al que afectaría una acción. Solo
+identidad: lo justo para decidir, y deliberadamente ni una referencia viva al
+estado del widget ni una copia de las capturas que cuelgan de él.
+
+```ts
+interface PermissionTarget {
+  /** Id del comentario o de la respuesta, según la acción. */
+  id: CommentId;
+  /** Nombre visible con el que se escribió el registro. */
+  author: string;
+  /** Identidad con la que se escribió; null si no se declaró ningún user.id. */
+  authorId: string | null;
+  /** Presente solo en edit:reply y delete:reply. */
+  commentId?: CommentId;
+}
+```
+
+Compara `authorId` contra tu propia sesión — `author` es una etiqueta, y dos
+personas pueden compartirla.
+
+## Metadatos de cambio
+
+```ts
+interface ChangeMeta {
+  origin: ChangeOrigin;
+}
+
+interface StatusChangeMeta extends ChangeMeta {
+  from: CommentStatus;
+  to: CommentStatus;
+}
+
+type UpdateMeta = ChangeMeta &
+  (
+    | { field: 'type'; from: CommentType | null; to: CommentType | null }
+    | { field: 'priority'; from: CommentPriority | null; to: CommentPriority | null }
+    | { field: 'tags'; from: string[]; to: string[] }
+  );
+```
+
+Mira [eventos](/es/docs/api/events) para saber cómo te llegan.

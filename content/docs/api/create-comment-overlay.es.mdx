@@ -1,0 +1,137 @@
+---
+title: createCommentOverlay
+description: El punto de entrada — sus dos sobrecargas, la instancia que devuelve, y los dos ayudantes a nivel de módulo que la acompañan.
+icon: SquareFunction
+---
+
+```ts
+import createCommentOverlay, {
+  createCommentOverlay as named,
+  readCommentLinkParam,
+  DEFAULT_LINK_PARAM,
+  CommentOverlay,
+} from 'helldots';
+```
+
+`createCommentOverlay` es a la vez la exportación por defecto y una con nombre.
+La clase, `CommentOverlay`, también se exporta — rara vez la necesitas como
+valor, pero es el tipo con el que anotas una instancia.
+
+## Firma
+
+La función tiene dos sobrecargas, discriminadas por `autoInit`.
+
+```ts
+// Monta de inmediato (el comportamiento por defecto).
+function createCommentOverlay(
+  options?: CommentOverlayOptions & { autoInit?: true },
+): CommentOverlay;
+
+// No se monta nada; recibes un inicializador para llamar cuando quieras.
+function createCommentOverlay(
+  options: CommentOverlayOptions & { autoInit: false },
+): () => CommentOverlay;
+```
+
+### Montar de inmediato
+
+```js
+const overlay = createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+Se puede llamar antes de que el documento esté listo — la instancia pospone su
+propio trabajo con el DOM hasta `DOMContentLoaded`. Lo que *no* es seguro es
+llamarlo fuera de un navegador; mira
+[aplicaciones renderizadas en el servidor](/es/docs/guides/frameworks#aplicaciones-renderizadas-en-el-servidor).
+
+### Posponer el montaje
+
+```js
+const init = createCommentOverlay({ autoInit: false, user });
+
+if (session.isStaff) {
+  const overlay = init();
+}
+```
+
+Útil cuando el widget solo debe aparecer para un subconjunto de personas, o
+detrás de un feature flag, sin pagar el montaje mientras tanto.
+
+## onReady es el punto seguro
+
+Cuando el documento ya está parseado, el montaje ocurre **dentro del
+constructor** — antes de que `createCommentOverlay()` haya devuelto nada que
+asignar. Por eso `onReady` recibe la instancia:
+
+```js
+createCommentOverlay({
+  onReady: async (overlay) => {
+    const { orphaned } = overlay.loadComments(await api.get('/comments'));
+    if (orphaned) console.info(`${orphaned} comentarios perdieron su elemento`);
+  },
+});
+```
+
+Un `loadComments()` llamado antes no se pierde — los datos se retienen y se
+reproducen al montar — pero sus cuentas vuelven a cero, porque todavía no se ha
+resuelto nada contra el DOM.
+
+## Construir la clase directamente
+
+```ts
+import { CommentOverlay } from 'helldots';
+
+const overlay = new CommentOverlay({ user: { name: 'Ana' } });
+```
+
+El constructor toma `Omit<CommentOverlayOptions, 'autoInit'>` — la bandera solo
+significa algo para la factoría. No hay razón para preferir esto a
+`createCommentOverlay`.
+
+## Ayudantes a nivel de módulo
+
+Existen dos exportaciones para poder leer un enlace directo **antes** de que
+exista una capa — y traer solo ese comentario.
+
+<TypeTable
+  type={{
+    DEFAULT_LINK_PARAM: {
+      type: 'string',
+      description: 'El nombre por defecto del parámetro de consulta que lleva el id de un comentario en las URLs de "Copiar enlace" — "helldotsComment". Exportado para que el nombre nunca haya que escribirlo dos veces.',
+    },
+    readCommentLinkParam: {
+      type: '(param?, href?) => string | null',
+      description: 'El id de comentario que pide la URL dada, o null. Ambos argumentos usan por defecto DEFAULT_LINK_PARAM y location.href. Una URL mal formada devuelve null en lugar de lanzar.',
+    },
+  }}
+/>
+
+```js
+import { readCommentLinkParam } from 'helldots';
+
+const id = readCommentLinkParam();
+const solo = id ? [await api.get(`/comments/${id}`)] : [];
+```
+
+Pasa el mismo `param` con el que se configuró el widget si sobrescribiste
+[`linkParam`](/es/docs/api/options#navegación-y-enlaces).
+
+## Desmontarlo
+
+```js
+overlay.cleanup();
+```
+
+Elimina el widget por completo — marcadores, barra, listeners, shadow root. Esto
+es lo que hace seguro el patrón de React bajo un doble montaje de desarrollo, y
+lo que llamas al cerrar sesión.
+
+```jsx
+useEffect(() => {
+  const overlay = createCommentOverlay({ user });
+  return () => overlay.cleanup();
+}, [user]);
+```

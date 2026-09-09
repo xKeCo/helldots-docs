@@ -1,0 +1,132 @@
+---
+title: Quick start
+description: From an empty project to a working comment overlay, then out to your own backend.
+icon: Rocket
+---
+
+<Steps>
+
+<Step>
+
+### Install
+
+```bash
+npm install helldots
+```
+
+</Step>
+
+<Step>
+
+### Mount the overlay
+
+Call it once, from the browser, as early as you like — it defers its own DOM
+work until the document is ready.
+
+```js title="app.js"
+import { createCommentOverlay } from 'helldots';
+
+createCommentOverlay({
+  user: { name: 'Ana' },
+  persistence: 'localStorage',
+});
+```
+
+</Step>
+
+<Step>
+
+### Leave a comment
+
+A toolbar appears at the bottom of the page.
+
+- <kbd>Alt</kbd>+<kbd>C</kbd> (<kbd>Option</kbd>+<kbd>C</kbd> on macOS) toggles comment mode.
+- **Click** anywhere to anchor a comment to that element.
+- **Drag** to select a region and attach a full-resolution crop of it.
+- The toolbar's inbox lists every comment, filters them, and shows the metrics dashboard.
+
+</Step>
+
+</Steps>
+
+That is the whole of it. Comments survive a reload, re-anchor themselves when
+the page changes, and stay in the visitor's browser.
+
+<Callout title="Try it here">
+  This site is running exactly that. Open the [Playground](/docs/playground)
+  and drive the widget through its public API.
+</Callout>
+
+## Wiring it to your own backend
+
+`persistence: "localStorage"` is a convenience, not the design. Drop it and
+subscribe instead — every comment is plain JSON.
+
+```js title="comments.js"
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  user: { name: currentUser.name, id: currentUser.id },
+
+  onCommentCreated: (comment) => api.post('/comments', comment),
+  onReplyAdded: (comment, reply) => api.post(`/comments/${comment.id}/replies`, reply),
+  onCommentStatusChanged: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onCommentUpdated: (comment) => api.patch(`/comments/${comment.id}`, comment),
+  onCommentDeleted: (id) => api.delete(`/comments/${id}`),
+
+  // The safe place to load: the widget has mounted and the counts are real.
+  onReady: async (o) => {
+    const { orphaned } = o.loadComments(await api.get('/comments'));
+    if (orphaned) console.info(`${orphaned} comments lost their element`);
+  },
+});
+```
+
+Ten separate callbacks is one way. The other is a single stream, which is
+usually what you want when everything goes to one endpoint:
+
+```js
+createCommentOverlay({
+  onChange: (event) => api.post('/helldots-events', event),
+});
+```
+
+`ChangeEvent` is a discriminated union — switch on `event.type` and TypeScript
+narrows the payload for you. Both routes carry the same events at the same
+moments; subscribe either way, or both.
+
+<Callout type="info" title="Load from onReady">
+  `loadComments()` is safe to call at any point — called before the widget has
+  mounted, the data is held and applied at mount. But the counts it returns
+  come back as zeroes, because nothing has been resolved against the DOM yet.
+  Use `onReady` when those numbers matter.
+</Callout>
+
+## A React component
+
+```jsx title="Comments.jsx"
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+`cleanup()` removes the widget entirely, which is what makes this safe under
+React's development double-mount. For a client-side router you also want
+`notifyNavigation()` — see [frameworks](/docs/guides/frameworks).
+
+## Next steps
+
+<Cards>
+  <Card title="Persistence" href="/docs/guides/persistence" description="localStorage, your own store, and how to reconcile the two." />
+  <Card title="Frameworks" href="/docs/guides/frameworks" description="Next.js, Vue, Astro, SPAs and a plain script tag." />
+  <Card title="Captures" href="/docs/guides/captures" description="What a screenshot really is here, and the four levers over its cost." />
+  <Card title="Identity & permissions" href="/docs/guides/identity" description="Who a comment is attributed to, and who may edit or delete it." />
+</Cards>

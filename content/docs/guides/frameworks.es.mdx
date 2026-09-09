@@ -1,0 +1,329 @@
+---
+title: Frameworks
+description: Next.js, React, Vue, Astro, SvelteKit y una etiqueta script simple — más la única llamada que todo router del lado del cliente tiene que hacer.
+icon: Blocks
+---
+
+HellDots es agnóstico al framework: es una función que monta un widget y
+devuelve un objeto. Lo que cambia entre frameworks es solo *dónde* lo llamas y
+*cuándo* le dices que la página cambió.
+
+## Aplicaciones renderizadas en el servidor
+
+Importar el paquete en el servidor es seguro — nada toca el DOM al importarse.
+Llamar a `createCommentOverlay` en el servidor no lo es. Mantén la llamada en el
+cliente:
+
+<Tabs items={['Next.js (App Router)', 'Remix / React Router', 'Astro']}>
+
+<Tab value="Next.js (App Router)">
+
+```tsx title="components/comments.tsx"
+'use client';
+
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }: { user: { name: string; id?: string } }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+Renderízalo desde el layout raíz, y mira [SPAs](#aplicaciones-de-una-sola-página)
+más abajo para el cableado del router — el App Router es una.
+
+</Tab>
+
+<Tab value="Remix / React Router">
+
+```jsx title="app/root.jsx"
+import { useEffect } from 'react';
+import { createCommentOverlay } from 'helldots';
+
+export function Comments({ user }) {
+  useEffect(() => {
+    const overlay = createCommentOverlay({ user, persistence: 'localStorage' });
+    return () => overlay.cleanup();
+  }, [user]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="Astro">
+
+```astro title="src/layouts/Base.astro"
+<script>
+  import { createCommentOverlay } from 'helldots';
+
+  createCommentOverlay({
+    user: { name: 'Ana' },
+    persistence: 'localStorage',
+  });
+</script>
+```
+
+Un `<script>` de Astro es del lado del cliente y pasa por el bundler, así que el
+import se resuelve igual que en cualquier otro sitio. Con View Transitions
+activadas, llama a `notifyNavigation()` desde `astro:page-load`.
+
+</Tab>
+
+</Tabs>
+
+<Callout type="warn" title="cleanup() es lo que hace esto seguro">
+  React ejecuta los efectos dos veces en desarrollo. Devolver
+  `overlay.cleanup()` desde el efecto elimina el widget por completo, así que el
+  segundo montaje no te deja con dos barras de herramientas. Es también lo que
+  quieres al cerrar sesión, o cuando el componente se desmonta por cualquier otra
+  razón.
+</Callout>
+
+## Aplicaciones de una sola página
+
+Un router del lado del cliente cambia el DOM sin recargar la página. HellDots no
+puede verlo, así que hay dos cosas que cablear.
+
+```js
+const overlay = createCommentOverlay({
+  user,
+  persistence: 'localStorage',
+
+  // 1. Deja que los saltos entre páginas del widget usen tu router.
+  navigate: (page) => router.push(page),
+});
+
+// 2. Avisa al widget después de cada renderizado de ruta.
+router.afterEach(() => overlay.notifyNavigation());
+```
+
+**`navigate`** lo usa el salto de "ver en su página" de la bandeja. Sin él, ese
+salto es una recarga completa, que tira por la borda el estado de tu aplicación.
+
+**`notifyNavigation()`** reclasifica cada comentario contra la nueva ruta,
+vuelve a resolver las anclas contra el nuevo DOM, reconstruye los marcadores y
+mueve la bandeja a la nueva página. Devuelve las mismas cuentas
+`{ anchored, orphaned, inactive }` que `loadComments()`.
+
+Llámalo después de que la nueva ruta se haya pintado de verdad, no antes — los
+elementos tienen que existir para que las anclas se resuelvan contra ellos.
+
+<Callout type="warn" title="No lo programes solo con requestAnimationFrame">
+  Dos `requestAnimationFrame` es la forma natural de decir "después de que el
+  navegador haya maquetado esto", y es correcta — hasta que la pestaña está
+  oculta. **Una pestaña oculta nunca pinta, así que su `requestAnimationFrame` no
+  se dispara jamás**, y una navegación que ocurra mientras alguien mira otra
+  pestaña deja al widget apuntando a la página anterior.
+
+  El maquetado sí se calcula en una pestaña oculta, así que dale al frame una
+  fecha límite en lugar de una espera más larga — gana el que llegue primero. Hay
+  un [ayudante `onNextPaint`
+  desarrollado](/es/docs/playground#cómo-lo-hace-este-sitio) en la página del
+  playground; este sitio lo usa.
+</Callout>
+
+### Atrás y adelante
+
+```js
+createCommentOverlay({ autoDetectNavigation: true });
+```
+
+Opcional, y solo para `popstate`: cubre los botones de atrás y adelante del
+navegador. El enrutado con `pushState` no dispara `popstate`, así que el gancho
+de tu propio router sigue siendo necesario. Cablea los dos.
+
+<Tabs items={['Next.js App Router', 'React Router', 'Vue Router', 'SvelteKit']}>
+
+<Tab value="Next.js App Router">
+
+```tsx
+'use client';
+
+import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
+import { createCommentOverlay, type CommentOverlay } from 'helldots';
+
+export function Comments() {
+  const [overlay, setOverlay] = useState<CommentOverlay | null>(null);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    const instance = createCommentOverlay({
+      persistence: 'localStorage',
+      autoDetectNavigation: true,
+      navigate: (page) => router.push(page),
+      onReady: setOverlay,
+    });
+    return () => instance.cleanup();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!overlay) return;
+    // Dos frames: deja que la nueva ruta pinte antes de resolver las anclas.
+    const frame = requestAnimationFrame(() =>
+      requestAnimationFrame(() => overlay.notifyNavigation()),
+    );
+    return () => cancelAnimationFrame(frame);
+  }, [overlay, pathname]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="React Router">
+
+```jsx
+import { useEffect } from 'react';
+import { useLocation, useNavigate } from 'react-router';
+
+function Comments() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const overlayRef = useRef(null);
+
+  useEffect(() => {
+    overlayRef.current = createCommentOverlay({
+      persistence: 'localStorage',
+      autoDetectNavigation: true,
+      navigate: (page) => navigate(page),
+    });
+    return () => overlayRef.current?.cleanup();
+  }, []);
+
+  useEffect(() => {
+    overlayRef.current?.notifyNavigation();
+  }, [location.pathname]);
+
+  return null;
+}
+```
+
+</Tab>
+
+<Tab value="Vue Router">
+
+```js
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  persistence: 'localStorage',
+  autoDetectNavigation: true,
+  navigate: (page) => router.push(page),
+});
+
+router.afterEach(async () => {
+  await nextTick();
+  overlay.notifyNavigation();
+});
+```
+
+</Tab>
+
+<Tab value="SvelteKit">
+
+```js
+import { afterNavigate } from '$app/navigation';
+import { goto } from '$app/navigation';
+import { createCommentOverlay } from 'helldots';
+
+const overlay = createCommentOverlay({
+  persistence: 'localStorage',
+  autoDetectNavigation: true,
+  navigate: (page) => goto(page),
+});
+
+afterNavigate(() => overlay.notifyNavigation());
+```
+
+</Tab>
+
+</Tabs>
+
+### Volver a anclar sin navegar
+
+`notifyNavigation()` es también la primitiva de "vuelve a anclar ahora". Si tu
+aplicación reemplazó el DOM de una ruta sin cambiar la URL — un cambio de
+pestaña, una recarga de datos que reconstruye una lista — llámalo y los
+comentarios vuelven a encontrar sus elementos.
+
+```js
+await refetchDashboard();
+overlay.notifyNavigation();
+```
+
+## Sin bundler
+
+El build UMD define una variable global `HellDots` y lleva el renderizador de
+capturas dentro:
+
+```html
+<script src="https://unpkg.com/helldots@0.12.0"></script>
+<script>
+  const overlay = HellDots.createCommentOverlay({
+    user: { name: 'Ana' },
+    persistence: 'localStorage',
+  });
+</script>
+```
+
+<Callout type="warn" title="unpkg sirve el build UMD por defecto">
+  El campo `unpkg` del paquete apunta a `dist/helldots.umd.js`, así que
+  `https://unpkg.com/helldots` — con o sin `?module` — es el archivo UMD. Asigna
+  una variable global y no exporta nada, así que hacer `import` de esa URL no
+  funcionará.
+</Callout>
+
+Para ESM nativo sin ningún paso de build, usa una CDN que resuelva
+especificadores desnudos, para que el `import("modern-screenshot")` dinámico de
+dentro del paquete tenga adónde ir:
+
+```html
+<script type="module">
+  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.0';
+
+  createCommentOverlay({ persistence: 'localStorage' });
+</script>
+```
+
+Servir `dist/helldots.esm.js` directamente desde unpkg o jsDelivr también
+funciona, pero entonces la dependencia peer es cosa tuya — con un import map:
+
+```html
+<script type="importmap">
+  {
+    "imports": {
+      "modern-screenshot": "https://esm.sh/modern-screenshot@4"
+    }
+  }
+</script>
+<script type="module">
+  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.0/dist/helldots.esm.js';
+
+  createCommentOverlay({ persistence: 'localStorage' });
+</script>
+```
+
+## Posponer el montaje
+
+Por defecto `createCommentOverlay` monta de inmediato. Pasa `autoInit: false` y
+recibes en su lugar un inicializador — útil cuando el widget solo debe aparecer
+para personal con sesión iniciada, o detrás de un feature flag.
+
+```js
+const init = createCommentOverlay({ autoInit: false, user });
+
+if (session.isStaff) {
+  const overlay = init();
+}
+```
