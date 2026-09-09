@@ -259,6 +259,81 @@ await refetchDashboard();
 overlay.notifyNavigation();
 ```
 
+## Hotkeys and the Shadow DOM
+
+The widget renders inside a Shadow DOM, which is what keeps your CSS out of it.
+It has one consequence worth knowing before it bites you: **an event that
+crosses a shadow boundary is retargeted.** A `keydown` listener on `window` sees
+`event.target` as the `<helldots-root>` host element, not the textarea the
+character is going into.
+
+Every page-level hotkey that guards itself with "am I typing?" is written
+against `event.target`, so that guard is blind here. On a docs site with a
+single-letter theme shortcut, typing `d` inside a comment flips the page from
+light to dark mid-sentence.
+
+<Callout type="warn" title="This site hit exactly that">
+  Three shortcuts misfired while typing a comment: `d` and `D` toggled the
+  theme (the host's guard was defeated by retargeting), `Cmd`/`Ctrl`+`K` opened
+  the search dialog over an unsent draft, and `Alt`+`C` — HellDots' own
+  shortcut, and the way you type **ç** on macOS — closed the box.
+</Callout>
+
+`composedPath()` is the fix. Unlike `target` it reports the real element inside
+the shadow root, so a guard written against it sees the textarea:
+
+```ts
+function isEditable(node: EventTarget): boolean {
+  if (!(node instanceof HTMLElement)) return false;
+  if (node.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(node.tagName);
+}
+
+function typing(event: KeyboardEvent): boolean {
+  return event.composedPath().some(isEditable);
+}
+```
+
+If the hotkey is yours, guard it with that. If it belongs to a framework you do
+not control, intercept it first — a capture-phase listener on `window` runs
+before any of them:
+
+```ts
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (event.isComposing || !typing(event)) return;
+
+    const key = event.key.toLowerCase();
+    const bare = !event.metaKey && !event.ctrlKey && !event.altKey;
+
+    // Propagation only — never preventDefault, or the character is not typed.
+    if ((key === 'd' && bare) || (event.altKey && event.code === 'KeyC')) {
+      event.stopImmediatePropagation();
+    }
+  },
+  true,
+);
+```
+
+Two details that matter:
+
+- **Stop propagation, never `preventDefault()`.** Propagation control keeps the
+  hotkey handler from running; the default action — inserting the character —
+  is unaffected either way. Calling `preventDefault()` would swallow the
+  keystroke.
+- **Do not blanket-block.** Leave `Escape`, `Enter` and `Cmd`+`Enter` alone: the
+  widget uses them to dismiss the box, send a reply and send a comment.
+
+<Callout title="HellDots' own shortcut is unguarded too">
+  `Alt`+`C` fires from inside a text field, including the widget's own comment
+  box, and `e.code === "KeyC"` means it catches the macOS `Option`+`C` that
+  produces **ç**. Until that is guarded in the library, the interception above
+  is what covers it. Changing
+  [`shortcutModifier`](/docs/api/options#interface) to `"ctrl"` avoids the ç
+  collision specifically.
+</Callout>
+
 ## No bundler
 
 The UMD build defines a `HellDots` global and carries the screenshot renderer

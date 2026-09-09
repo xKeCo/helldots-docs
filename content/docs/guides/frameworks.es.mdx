@@ -262,6 +262,83 @@ await refetchDashboard();
 overlay.notifyNavigation();
 ```
 
+## Atajos de teclado y el Shadow DOM
+
+El widget se renderiza dentro de un Shadow DOM, que es lo que mantiene tu CSS
+fuera de él. Tiene una consecuencia que conviene conocer antes de que te muerda:
+**un evento que cruza un límite de shadow se retargetea.** Un listener de
+`keydown` en `window` ve `event.target` como el elemento anfitrión
+`<helldots-root>`, no el textarea al que va el carácter.
+
+Cualquier atajo de la página que se proteja con "¿estoy escribiendo?" está
+escrito contra `event.target`, así que esa guarda aquí es ciega. En un sitio de
+documentación con un atajo de tema de una sola letra, escribir `d` dentro de un
+comentario cambia la página de claro a oscuro a media frase.
+
+<Callout type="warn" title="A este sitio le pasó exactamente eso">
+  Tres atajos se disparaban al escribir un comentario: `d` y `D` cambiaban el
+  tema (el retargeting derrotaba la guarda del anfitrión), `Cmd`/`Ctrl`+`K`
+  abría el buscador sobre un borrador sin enviar, y `Alt`+`C` — el atajo propio
+  de HellDots, y la forma de escribir **ç** en macOS — cerraba la caja.
+</Callout>
+
+`composedPath()` es la solución. A diferencia de `target`, informa del elemento
+real dentro del shadow root, así que una guarda escrita contra él sí ve el
+textarea:
+
+```ts
+function isEditable(node: EventTarget): boolean {
+  if (!(node instanceof HTMLElement)) return false;
+  if (node.isContentEditable) return true;
+  return ['INPUT', 'TEXTAREA', 'SELECT'].includes(node.tagName);
+}
+
+function typing(event: KeyboardEvent): boolean {
+  return event.composedPath().some(isEditable);
+}
+```
+
+Si el atajo es tuyo, protégelo con eso. Si pertenece a un framework que no
+controlas, intercéptalo antes — un listener en fase de captura sobre `window` se
+ejecuta antes que todos ellos:
+
+```ts
+window.addEventListener(
+  'keydown',
+  (event) => {
+    if (event.isComposing || !typing(event)) return;
+
+    const key = event.key.toLowerCase();
+    const bare = !event.metaKey && !event.ctrlKey && !event.altKey;
+
+    // Solo propagación — nunca preventDefault, o el carácter no se escribe.
+    if ((key === 'd' && bare) || (event.altKey && event.code === 'KeyC')) {
+      event.stopImmediatePropagation();
+    }
+  },
+  true,
+);
+```
+
+Dos detalles que importan:
+
+- **Detén la propagación, nunca `preventDefault()`.** Controlar la propagación
+  impide que el manejador del atajo se ejecute; la acción por defecto —insertar
+  el carácter— no se ve afectada en ningún caso. Llamar a `preventDefault()` se
+  tragaría la pulsación.
+- **No bloquees a ciegas.** Deja en paz `Escape`, `Enter` y `Cmd`+`Enter`: el
+  widget los usa para descartar la caja, enviar una respuesta y enviar un
+  comentario.
+
+<Callout title="El atajo propio de HellDots tampoco está protegido">
+  `Alt`+`C` se dispara desde dentro de un campo de texto, incluida la propia
+  caja de comentario del widget, y `e.code === "KeyC"` hace que capture el
+  `Option`+`C` de macOS que produce **ç**. Hasta que eso se proteja en la
+  librería, la intercepción de arriba es lo que lo cubre. Cambiar
+  [`shortcutModifier`](/es/docs/api/options#interfaz) a `"ctrl"` evita la
+  colisión con la ç en concreto.
+</Callout>
+
 ## Sin bundler
 
 El build UMD define una variable global `HellDots` y lleva el renderizador de

@@ -134,6 +134,10 @@ Router site has to make:
 - **`notifyNavigation()` on `pathname`.** `autoDetectNavigation` covers back
   and forward; pushState routing does not fire `popstate`, so the router's own
   change is what triggers the re-anchor.
+- **A capture-phase hotkey shield.** The widget lives in a Shadow DOM, so this
+  page's own shortcuts could not tell that you were typing inside it — `d`
+  flipped the theme mid-comment. See
+  [hotkeys and the Shadow DOM](/docs/guides/frameworks#hotkeys-and-the-shadow-dom).
 
 That last one has a wrinkle worth stealing. The obvious scheduling is two
 `requestAnimationFrame`s — the first lands after React commits, the second

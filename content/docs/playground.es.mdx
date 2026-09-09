@@ -141,6 +141,10 @@ con App Router tiene que tomar:
 - **`notifyNavigation()` al cambiar `pathname`.** `autoDetectNavigation` cubre
   atrás y adelante; el enrutado con pushState no dispara `popstate`, así que el
   cambio del propio router es lo que dispara el re-anclaje.
+- **Un escudo de atajos en fase de captura.** El widget vive en un Shadow DOM,
+  así que los atajos de esta página no podían saber que estabas escribiendo
+  dentro de él — `d` cambiaba el tema a media frase. Mira
+  [atajos de teclado y el Shadow DOM](/es/docs/guides/frameworks#atajos-de-teclado-y-el-shadow-dom).
 
 Ese último tiene un matiz que vale la pena robar. Lo obvio es programarlo con
 dos `requestAnimationFrame` — el primero cae después de que React haga commit, y

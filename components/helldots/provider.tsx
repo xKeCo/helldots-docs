@@ -11,6 +11,7 @@ import {
 } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import type { CommentOverlay } from 'helldots';
+import { installHotkeyShield } from './hotkey-shield';
 
 declare global {
   interface Window {
@@ -117,6 +118,10 @@ export function HellDotsProvider({
   // one render — a ref keeps them pointed at the current one.
   const routerRef = useRef(router);
   routerRef.current = router;
+
+  // Independent of the widget's own lifecycle: the guard is about this page's
+  // hotkeys, and it has to be listening before the first keystroke lands.
+  useEffect(() => installHotkeyShield(), []);
 
   useEffect(() => {
     let cancelled = false;
