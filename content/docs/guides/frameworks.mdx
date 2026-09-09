@@ -340,7 +340,7 @@ The UMD build defines a `HellDots` global and carries the screenshot renderer
 inside it:
 
 ```html
-<script src="https://unpkg.com/helldots@0.12.0"></script>
+<script src="https://unpkg.com/helldots@0.12.1"></script>
 <script>
   const overlay = HellDots.createCommentOverlay({
     user: { name: 'Ana' },
@@ -361,7 +361,7 @@ go:
 
 ```html
 <script type="module">
-  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.0';
+  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.1';
 
   createCommentOverlay({ persistence: 'localStorage' });
 </script>
@@ -379,7 +379,7 @@ then the peer dependency is yours to resolve — with an import map:
   }
 </script>
 <script type="module">
-  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.0/dist/helldots.esm.js';
+  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.1/dist/helldots.esm.js';
 
   createCommentOverlay({ persistence: 'localStorage' });
 </script>

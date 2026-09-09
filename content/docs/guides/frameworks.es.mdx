@@ -345,7 +345,7 @@ El build UMD define una variable global `HellDots` y lleva el renderizador de
 capturas dentro:
 
 ```html
-<script src="https://unpkg.com/helldots@0.12.0"></script>
+<script src="https://unpkg.com/helldots@0.12.1"></script>
 <script>
   const overlay = HellDots.createCommentOverlay({
     user: { name: 'Ana' },
@@ -367,7 +367,7 @@ dentro del paquete tenga adónde ir:
 
 ```html
 <script type="module">
-  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.0';
+  import { createCommentOverlay } from 'https://esm.sh/helldots@0.12.1';
 
   createCommentOverlay({ persistence: 'localStorage' });
 </script>
@@ -385,7 +385,7 @@ funciona, pero entonces la dependencia peer es cosa tuya — con un import map:
   }
 </script>
 <script type="module">
-  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.0/dist/helldots.esm.js';
+  import { createCommentOverlay } from 'https://unpkg.com/helldots@0.12.1/dist/helldots.esm.js';
 
   createCommentOverlay({ persistence: 'localStorage' });
 </script>
