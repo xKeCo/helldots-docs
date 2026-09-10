@@ -1,24 +1,28 @@
 import { cn } from '@/lib/cn';
 
 /**
- * The mark: one anchored comment dot with its tail, and the two smaller dots
- * of the comments already left on the page around it.
+ * The official mark: the outline of the shape the widget already draws. The
+ * comment cursor and every marker on the page share this silhouette — a sharp
+ * top-left corner opening into three quarters of a circle, where the corner is
+ * the tip that points at the element being commented on.
+ *
+ * `currentColor` rather than the brand blue, so a caller can put it on a
+ * coloured surface; `text-fd-primary` is the default the nav relies on.
  */
 export function HellDotsMark({ className }: { className?: string }) {
   return (
     <svg
-      viewBox="0 0 24 24"
+      viewBox="0 0 100 100"
       fill="none"
-      aria-hidden
+      role="img"
+      aria-label="HellDots"
       className={cn('text-fd-primary', className)}
     >
       <path
-        d="M14.5 3.5a6 6 0 0 1 4.2 10.3l-3.4 6.9a.9.9 0 0 1-1.6 0l-3.4-6.9A6 6 0 0 1 14.5 3.5Z"
-        fill="currentColor"
+        d="M10 10H50A40 40 0 0 1 90 50A40 40 0 0 1 50 90A40 40 0 0 1 10 50V10Z"
+        stroke="currentColor"
+        strokeWidth="12"
       />
-      <circle cx="14.5" cy="9.5" r="2.1" className="fill-fd-background" />
-      <circle cx="4.6" cy="6.4" r="1.9" fill="currentColor" opacity="0.45" />
-      <circle cx="6.1" cy="16.4" r="1.4" fill="currentColor" opacity="0.28" />
     </svg>
   );
 }

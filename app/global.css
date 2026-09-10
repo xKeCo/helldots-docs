@@ -3,17 +3,19 @@
 @import 'fumadocs-ui/css/preset.css';
 
 /*
- * The accent is the widget's own: HellDots paints its markers and its primary
- * actions in #2E90FA, so the docs and the thing they document agree on colour.
+ * The accent is the brand blue — the same #2563EB the mark is drawn in and the
+ * widget paints its markers and primary actions with, so the docs and the thing
+ * they document agree on colour. Dark mode lifts it a step: the brand value is
+ * a foreground here, not a fill, and it has to clear the near-black ground.
  */
 :root {
-  --color-fd-primary: #1570d6;
-  --color-fd-ring: #2e90fa;
+  --color-fd-primary: #2563eb;
+  --color-fd-ring: #2563eb;
 }
 
 .dark {
-  --color-fd-primary: #57a6fb;
-  --color-fd-ring: #2e90fa;
+  --color-fd-primary: #60a5fa;
+  --color-fd-ring: #60a5fa;
 }
 
 html {
