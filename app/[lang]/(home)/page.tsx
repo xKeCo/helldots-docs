@@ -4,7 +4,7 @@ import type { LucideIcon } from 'lucide-react';
 import { HellDotsMark } from '@/components/brand';
 import { getDictionary } from '@/lib/dictionaries';
 import { localizePath } from '@/lib/i18n';
-import { appName, links } from '@/lib/shared';
+import { appName, links, siteUrl } from '@/lib/shared';
 
 const icons: Record<string, LucideIcon> = {
   anchored: Crosshair,
@@ -22,6 +22,35 @@ export default async function HomePage(props: PageProps<'/[lang]'>) {
 
   return (
     <main className="flex flex-1 flex-col">
+      <script
+        type="application/ld+json"
+        // Static JSON built from our own strings; `<` is escaped so none of
+        // them can close the tag.
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@graph': [
+              {
+                '@type': 'WebSite',
+                name: `${appName} docs`,
+                url: siteUrl,
+                inLanguage: lang,
+              },
+              {
+                '@type': 'SoftwareApplication',
+                name: appName,
+                description: getDictionary(lang).tagline,
+                applicationCategory: 'DeveloperApplication',
+                operatingSystem: 'Any',
+                url: siteUrl,
+                downloadUrl: links.npm,
+                codeRepository: links.github,
+                offers: { '@type': 'Offer', price: '0', priceCurrency: 'USD' },
+              },
+            ],
+          }).replace(/</g, '\\u003c'),
+        }}
+      />
       <section className="mx-auto w-full max-w-5xl px-6 pt-20 pb-16 text-center sm:pt-28">
         <Link
           href={href('/docs/playground')}

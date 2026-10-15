@@ -56,5 +56,9 @@ export default function proxy(request: NextRequest, event: NextFetchEvent) {
 }
 
 export const config = {
-  matcher: ['/((?!api|_next/static|_next/image|favicon.ico).*)'],
+  // The metadata files live at the root, outside `[lang]` — leave them alone or
+  // the locale middleware rewrites `/icon.svg` to `/en/icon.svg` and 404s.
+  matcher: [
+    '/((?!api|_next/static|_next/image|favicon\\.ico|icon|apple-icon|robots\\.txt|sitemap\\.xml|manifest\\.webmanifest).*)',
+  ],
 };

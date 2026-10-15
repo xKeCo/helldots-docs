@@ -11,7 +11,8 @@ import { notFound } from 'next/navigation';
 import { getMDXComponents } from '@/components/mdx';
 import type { Metadata } from 'next';
 import { createRelativeLink } from 'fumadocs-ui/mdx';
-import { docsSourceUrl } from '@/lib/shared';
+import { appName, docsSourceUrl, siteUrl } from '@/lib/shared';
+import { getDictionary } from '@/lib/dictionaries';
 import { i18n, localizePath } from '@/lib/i18n';
 
 export default async function Page(props: PageProps<'/[lang]/docs/[[...slug]]'>) {
@@ -24,6 +25,24 @@ export default async function Page(props: PageProps<'/[lang]/docs/[[...slug]]'>)
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
+      <script
+        type="application/ld+json"
+        // Static, build-time JSON from our own frontmatter; `<` is escaped so a
+        // title can never close the tag.
+        dangerouslySetInnerHTML={{
+          __html: JSON.stringify({
+            '@context': 'https://schema.org',
+            '@type': 'TechArticle',
+            headline: page.data.title,
+            description: page.data.description,
+            inLanguage: params.lang,
+            url: `${siteUrl}${page.url}`,
+            image: `${siteUrl}${getPageImageUrl(page).url}`,
+            isPartOf: { '@type': 'WebSite', name: `${appName} docs`, url: siteUrl },
+            publisher: { '@type': 'Person', name: 'xKeCo' },
+          }).replace(/</g, '\\u003c'),
+        }}
+      />
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription className="mb-0">{page.data.description}</DocsDescription>
       <div className="flex flex-row gap-2 items-center border-b pb-6">
@@ -58,17 +77,35 @@ export async function generateMetadata(
   // captures page, not at the English home.
   const path = `/docs${page.slugs.length ? `/${page.slugs.join('/')}` : ''}`;
 
+  const dict = getDictionary(params.lang);
+  const image = getPageImageUrl(page).url;
+
   return {
     title: page.data.title,
     description: page.data.description,
     alternates: {
       canonical: page.url,
-      languages: Object.fromEntries(
-        i18n.languages.map((code) => [code, localizePath(code, path)]),
-      ),
+      languages: {
+        ...Object.fromEntries(i18n.languages.map((code) => [code, localizePath(code, path)])),
+        'x-default': localizePath(i18n.defaultLanguage, path),
+      },
     },
+    // `openGraph` replaces the layout's object rather than merging into it, so
+    // everything a card needs has to be restated here, not just the image.
     openGraph: {
-      images: getPageImageUrl(page).url,
+      title: page.data.title,
+      description: page.data.description,
+      url: page.url,
+      siteName: `${appName} docs`,
+      locale: dict.ogLocale,
+      type: 'article',
+      images: [{ url: image, width: 1200, height: 630, alt: page.data.title }],
+    },
+    twitter: {
+      card: 'summary_large_image',
+      title: page.data.title,
+      description: page.data.description,
+      images: [image],
     },
   };
 }

@@ -1,8 +1,8 @@
 import { getPageImageUrl, source } from '@/lib/source';
 import { notFound } from 'next/navigation';
 import { ImageResponse } from 'next/og';
-import { generate as DefaultImage } from 'fumadocs-ui/og';
-import { appName } from '@/lib/shared';
+import { OgImage, ogSize } from '@/components/og-image';
+import { getDictionary } from '@/lib/dictionaries';
 
 export const revalidate = false;
 
@@ -12,11 +12,14 @@ export async function GET(_req: Request, { params }: RouteContext<'/[lang]/og/do
   if (!page) notFound();
 
   return new ImageResponse(
-    <DefaultImage title={page.data.title} description={page.data.description} site={appName} />,
-    {
-      width: 1200,
-      height: 630,
-    },
+    (
+      <OgImage
+        title={page.data.title}
+        description={page.data.description}
+        eyebrow={getDictionary(lang).nav.documentation}
+      />
+    ),
+    ogSize,
   );
 }
 

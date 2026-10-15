@@ -7,7 +7,7 @@ export const docsImageRoute = '/og/docs';
 export const docsContentRoute = '/llms.mdx/docs';
 
 export const siteUrl =
-  process.env.NEXT_PUBLIC_SITE_URL ?? 'https://helldots-docs.vercel.app';
+  process.env.NEXT_PUBLIC_SITE_URL ?? 'https://helldots.kcollazos.me';
 
 /** The project itself — what the nav's GitHub icon and the issues link mean. */
 export const gitConfig = {

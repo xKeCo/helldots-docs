@@ -9,6 +9,9 @@ import { i18n, type Locale } from './i18n';
 export interface Dictionary {
   /** BCP 47 tag for <html lang> and Intl. */
   htmlLang: string;
+  /** Open Graph's spelling of the locale: language_TERRITORY, with an underscore. */
+  ogLocale: string;
+  keywords: string[];
   /** The locale HellDots itself is told to render in. */
   widgetLocale: string;
   /** Short enough for a browser tab; the tagline is not. */
@@ -65,6 +68,18 @@ const featureKeys = ['anchored', 'capture', 'store', 'triage', 'team', 'unobtrus
 
 const en: Dictionary = {
   htmlLang: 'en',
+  ogLocale: 'en_US',
+  keywords: [
+    'comment overlay',
+    'website feedback',
+    'visual feedback tool',
+    'web annotation',
+    'pin comments on page',
+    'screenshot comments',
+    'JavaScript library',
+    'TypeScript',
+    'HellDots',
+  ],
   widgetLocale: 'en',
   titleSuffix: 'comment overlay for web apps',
   tagline:
@@ -172,6 +187,17 @@ const en: Dictionary = {
 
 const es: Dictionary = {
   htmlLang: 'es',
+  ogLocale: 'es_ES',
+  keywords: [
+    'capa de comentarios',
+    'feedback visual',
+    'comentarios sobre una página web',
+    'anotaciones web',
+    'comentarios con captura',
+    'biblioteca JavaScript',
+    'TypeScript',
+    'HellDots',
+  ],
   widgetLocale: 'es',
   titleSuffix: 'capa de comentarios para aplicaciones web',
   tagline:

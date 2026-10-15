@@ -108,8 +108,8 @@ nothing on `window`.
 ## Deploying
 
 Any Next.js host. On Vercel the defaults are correct; set
-`NEXT_PUBLIC_SITE_URL` to the canonical origin so OG images and metadata
-resolve against it.
+`NEXT_PUBLIC_SITE_URL` to the canonical origin so OG images, the sitemap and
+canonical links resolve against it (it defaults to `https://helldots.kcollazos.me`).
 
 ## License
 

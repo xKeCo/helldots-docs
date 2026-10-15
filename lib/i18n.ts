@@ -23,5 +23,9 @@ export function localePrefix(locale: string | undefined): string[] {
 /** Prefix an app-absolute path with the locale, when it needs one. */
 export function localizePath(locale: string | undefined, path: string): string {
   const prefix = localePrefix(locale);
-  return prefix.length ? `/${prefix[0]}${path}` : path;
+  if (!prefix.length) return path;
+
+  // `/es`, not `/es/`: the trailing-slash form redirects, and a canonical or
+  // hreflang URL that redirects tells a crawler it has the wrong address.
+  return path === '/' ? `/${prefix[0]}` : `/${prefix[0]}${path}`;
 }
