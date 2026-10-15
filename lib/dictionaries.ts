@@ -24,6 +24,8 @@ export interface Dictionary {
     readDocs: string;
     playground: string;
     integrationNote: string;
+    macKey: string;
+    onMac: string;
     toggles: string;
     features: Array<{ key: string; title: string; body: string }>;
     closingTitle: string;
@@ -77,6 +79,8 @@ const en: Dictionary = {
     readDocs: 'Read the docs',
     playground: 'Live playground',
     integrationNote: 'That is the whole integration.',
+    macKey: '⌥ Option',
+    onMac: 'on macOS',
     toggles: 'toggles comment mode.',
     features: [
       {
@@ -107,7 +111,7 @@ const en: Dictionary = {
       {
         key: 'unobtrusive',
         title: 'Out of the way',
-        body: 'Alt+C to arm, click to place, drag to crop. Rendered inside a Shadow DOM, so your CSS cannot leak in and its styles cannot leak out.',
+        body: 'Alt+C (⌥ Option+C on macOS) to arm, click to place, drag to crop. Rendered inside a Shadow DOM, so your CSS cannot leak in and its styles cannot leak out.',
       },
     ],
     closingTitle: 'Nothing is sent anywhere',
@@ -182,6 +186,8 @@ const es: Dictionary = {
     readDocs: 'Leer la documentación',
     playground: 'Playground en vivo',
     integrationNote: 'Esa es toda la integración.',
+    macKey: '⌥ Opción',
+    onMac: 'en macOS',
     toggles: 'activa el modo comentario.',
     features: [
       {
@@ -212,7 +218,7 @@ const es: Dictionary = {
       {
         key: 'unobtrusive',
         title: 'Sin estorbar',
-        body: 'Alt+C para armar, clic para colocar, arrastrar para recortar. Se renderiza dentro de un Shadow DOM, así que tu CSS no se filtra hacia dentro ni sus estilos hacia fuera.',
+        body: 'Alt+C (⌥ Opción+C en macOS) para armar, clic para colocar, arrastrar para recortar. Se renderiza dentro de un Shadow DOM, así que tu CSS no se filtra hacia dentro ni sus estilos hacia fuera.',
       },
     ],
     closingTitle: 'No se envía nada a ninguna parte',

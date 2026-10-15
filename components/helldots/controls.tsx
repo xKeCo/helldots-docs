@@ -46,8 +46,11 @@ export function HellDotsControls() {
   const { overlay, ready, revision, commentMode, locale, name, setName } = useHellDots();
   const t = getDictionary(locale).controls;
   const [draft, setDraft] = useState(name);
+  // Decided after mount so the server and first client render agree.
+  const [isMac, setIsMac] = useState(false);
 
   useEffect(() => setDraft(name), [name]);
+  useEffect(() => setIsMac(/Mac|iPhone|iPad/.test(navigator.platform)), []);
 
   // `revision` is the dependency, not the value: it is bumped on every change
   // the widget emits, which is exactly when these figures go stale.
@@ -99,7 +102,7 @@ export function HellDotsControls() {
           <Button variant="primary" disabled={!ready} onClick={() => overlay?.toggleCommentMode()}>
             {commentMode ? t.exitMode : t.enterMode}
             <kbd className="rounded border border-white/25 px-1 text-[10px] font-normal">
-              Alt+C
+              {isMac ? '⌥C' : 'Alt+C'}
             </kbd>
           </Button>
           <Button disabled={!ready || !metrics?.total} onClick={() => overlay?.exportCommentsCsv()}>

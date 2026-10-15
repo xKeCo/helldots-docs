@@ -94,6 +94,15 @@ export default async function HomePage(props: PageProps<'/[lang]'>) {
           <kbd className="rounded border border-fd-border bg-fd-muted px-1.5 py-0.5 text-xs">
             C
           </kbd>{' '}
+          (
+          <kbd className="rounded border border-fd-border bg-fd-muted px-1.5 py-0.5 text-xs">
+            {t.macKey}
+          </kbd>{' '}
+          +{' '}
+          <kbd className="rounded border border-fd-border bg-fd-muted px-1.5 py-0.5 text-xs">
+            C
+          </kbd>{' '}
+          {t.onMac}){' '}
           {t.toggles}
         </p>
       </section>
